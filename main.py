@@ -1,10 +1,11 @@
-from telegram import Update, KeyboardButton, ReplyKeyboardMarkup, KeyboardButtonRequestUsers, KeyboardButtonRequestChat, ChatAdministratorRights
-from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, MessageHandler, filters
+from telegram import Update, KeyboardButton, ReplyKeyboardMarkup, KeyboardButtonRequestUsers, KeyboardButtonRequestChat, ChatAdministratorRights, InlineQueryResultArticle, InputTextMessageContent
+from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, MessageHandler, filters, InlineQueryHandler
 from telegram.constants import ParseMode
 
 import os
 import logging
 import html
+import uuid
 
 # Enable logging
 logging.basicConfig(
@@ -14,25 +15,9 @@ logging.basicConfig(
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
-    
-    # Escape user-provided content to avoid HTML parsing errors
-    first_name = html.escape(user.first_name)
-    last_name = html.escape(user.last_name or 'N/A')
-    username = html.escape(user.username) if user.username else 'N/A'
-    user_id = user.id
-    language = html.escape(user.language_code or 'N/A')
-
-    # User info message with HTML and Emojis
-    message_text = (
-        f"👤 <b>First Name:</b> {first_name}\n"
-        f"👤 <b>Last Name:</b> {last_name}\n"
-        f"🆔 <b>User Name:</b> @{username}\n"
-        f"🔑 <b>User ID:</b> <code>{user_id}</code>\n"
-        f"🌐 <b>Language:</b> {language}"
-    )
+    await show_user_info(update, user, "Your Profile Info")
 
     # Keyboard buttons to request users/chats
-    # user_administrator_rights requires a ChatAdministratorRights object
     admin_rights = ChatAdministratorRights(
         is_anonymous=False,
         can_manage_chat=True,
@@ -74,16 +59,15 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     reply_markup = ReplyKeyboardMarkup(reply_keyboard, resize_keyboard=True)
     
-    await update.message.reply_text(message_text, reply_markup=reply_markup, parse_mode=ParseMode.HTML)
+    await update.message.reply_text("Choose an option from the menu below:", reply_markup=reply_markup)
 
 async def handle_users_shared(update: Update, context: ContextTypes.DEFAULT_TYPE):
     users_shared = update.message.users_shared
     for shared_user in users_shared.users:
         user_id = shared_user.user_id
         await update.message.reply_text(
-            f"✅ <b>Selected User Info:</b>\n\n"
-            f"🔑 <b>User ID:</b> <code>{user_id}</code>\n"
-            f"<i>Note: Further details are restricted by Telegram for security.</i>",
+            f"✅ <b>Selected User ID:</b> <code>{user_id}</code>\n\n"
+            f"💡 <i>To get full details, forward a message from this user to me!</i>",
             parse_mode=ParseMode.HTML
         )
 
@@ -92,8 +76,7 @@ async def handle_chat_shared(update: Update, context: ContextTypes.DEFAULT_TYPE)
     chat_id = chat_shared.chat_id
     
     await update.message.reply_text(
-        f"✅ <b>Selected Chat Info:</b>\n\n"
-        f"🔑 <b>Chat ID:</b> <code>{chat_id}</code>",
+        f"✅ <b>Selected Chat ID:</b> <code>{chat_id}</code>",
         parse_mode=ParseMode.HTML
     )
 
@@ -103,15 +86,20 @@ async def handle_text_messages(update: Update, context: ContextTypes.DEFAULT_TYP
         user = update.effective_user
         await show_user_info(update, user, "Your Account Info")
     elif update.message.forward_origin:
-        # Handle forwarded messages to get user info
         origin = update.message.forward_origin
         if hasattr(origin, 'sender_user'):
             await show_user_info(update, origin.sender_user, "Forwarded User Info")
+        elif hasattr(origin, 'chat'):
+            await update.message.reply_text(
+                f"📢 <b>Forwarded Chat Info:</b>\n\n"
+                f"🏷️ <b>Title:</b> {html.escape(origin.chat.title)}\n"
+                f"🔑 <b>Chat ID:</b> <code>{origin.chat.id}</code>",
+                parse_mode=ParseMode.HTML
+            )
         else:
             await update.message.reply_text("❌ Could not get info from this forward (Privacy settings).")
 
 async def show_user_info(update, user, title):
-    # Escape user-provided content
     first_name = html.escape(user.first_name)
     last_name = html.escape(user.last_name or 'N/A')
     username = html.escape(user.username) if user.username else 'N/A'
@@ -130,6 +118,38 @@ async def show_user_info(update, user, title):
     )
     await update.message.reply_text(message_text, parse_mode=ParseMode.HTML)
 
+async def inline_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.inline_query.query
+    user = update.inline_query.from_user
+    
+    # Show user's own info as an inline result
+    first_name = html.escape(user.first_name)
+    last_name = html.escape(user.last_name or 'N/A')
+    username = html.escape(user.username) if user.username else 'N/A'
+    user_id = user.id
+    language = html.escape(user.language_code or 'N/A')
+    is_premium = "Yes 🌟" if user.is_premium else "No"
+
+    content = (
+        f"👤 <b>User Info:</b>\n\n"
+        f"👤 <b>First Name:</b> {first_name}\n"
+        f"👤 <b>Last Name:</b> {last_name}\n"
+        f"🆔 <b>User Name:</b> @{username}\n"
+        f"🔑 <b>User ID:</b> <code>{user_id}</code>\n"
+        f"🌐 <b>Language:</b> {language}\n"
+        f"🌟 <b>Premium:</b> {is_premium}"
+    )
+
+    results = [
+        InlineQueryResultArticle(
+            id=str(uuid.uuid4()),
+            title="My Info",
+            description="Send your profile info",
+            input_message_content=InputTextMessageContent(content, parse_mode=ParseMode.HTML)
+        )
+    ]
+    await update.inline_query.answer(results, cache_time=1)
+
 if __name__ == '__main__':
     token = os.environ.get("TELEGRAM_BOT_TOKEN")
     if not token:
@@ -138,13 +158,10 @@ if __name__ == '__main__':
         application = ApplicationBuilder().token(token).build()
         
         application.add_handler(CommandHandler('start', start))
-        
-        # Handlers for shared users and chats
         application.add_handler(MessageHandler(filters.StatusUpdate.USERS_SHARED, handle_users_shared))
         application.add_handler(MessageHandler(filters.StatusUpdate.CHAT_SHARED, handle_chat_shared))
-        
-        # Handler for "My Account" button text
         application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text_messages))
+        application.add_handler(InlineQueryHandler(inline_query))
         
         print("Bot is starting...")
         application.run_polling()
