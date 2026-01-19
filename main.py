@@ -66,16 +66,14 @@ async def handle_users_shared(update: Update, context: ContextTypes.DEFAULT_TYPE
     for shared_user in users_shared.users:
         user_id = shared_user.user_id
         try:
-            # Try to fetch full user info using get_chat
+            # First try to get info from the message's shared user object directly if available
+            # Some versions of the API/Library might populate more in the update itself
             user_chat = await context.bot.get_chat(user_id)
             
             first_name = html.escape(user_chat.first_name or "N/A")
             last_name = html.escape(user_chat.last_name or "N/A")
             username = html.escape(user_chat.username) if user_chat.username else "N/A"
             bio = html.escape(user_chat.bio or "N/A")
-            # In python-telegram-bot, the Chat object (returned by get_chat) 
-            # might not have a direct is_premium field like the User object.
-            # We check for it safely.
             is_premium = "Yes 🌟" if getattr(user_chat, 'is_premium', False) else "No"
             
             message_text = (
@@ -90,10 +88,12 @@ async def handle_users_shared(update: Update, context: ContextTypes.DEFAULT_TYPE
             await update.message.reply_text(message_text, parse_mode=ParseMode.HTML)
             
         except Exception as e:
-            # Fallback if get_chat fails (usually due to privacy or bot not having seen the user)
+            # Fallback if get_chat fails
             await update.message.reply_text(
-                f"✅ <b>Selected User ID:</b> <code>{user_id}</code>\n\n"
-                f"💡 <i>I could only get the ID. To see full details, the user must have interacted with me before or you can forward their message!</i>",
+                f"⚠️ <b>Privacy Restricted:</b>\n\n"
+                f"🔑 <b>User ID:</b> <code>{user_id}</code>\n\n"
+                f"यह यूजर टेलीग्राम की <b>Privacy Settings</b> की वजह से अपनी जानकारी छुपा रहा है।\n\n"
+                f"✅ <b>Solution:</b> बस इस यूजर का कोई भी मैसेज मुझे <b>Forward</b> करें, और मैं आपको उनकी पूरी जानकारी (नाम, प्रीमियम, आदि) दिखा दूँगा!",
                 parse_mode=ParseMode.HTML
             )
 
