@@ -1,10 +1,9 @@
-import os
-import logging
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
-
+from telegram import Update, KeyboardButton, ReplyKeyboardMarkup, KeyboardButtonRequestUsers, KeyboardButtonRequestChat
+from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, MessageHandler, filters
 from telegram.constants import ParseMode
 
+import os
+import logging
 import html
 
 # Enable logging
@@ -32,31 +31,52 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"🌐 <b>Language:</b> {language}"
     )
 
-    # Inline buttons layout with emojis
-    keyboard = [
+    # Keyboard buttons to request users/chats
+    reply_keyboard = [
         [
-            InlineKeyboardButton("👤 User", callback_data="user"),
-            InlineKeyboardButton("🌟 Premium", callback_data="premium"),
-            InlineKeyboardButton("🤖 Bot", callback_data="bot")
+            KeyboardButton("👤 User", request_users=KeyboardButtonRequestUsers(request_id=1, user_is_bot=False, max_quantity=1)),
+            KeyboardButton("🌟 Premium", request_users=KeyboardButtonRequestUsers(request_id=2, user_is_premium=True, max_quantity=1)),
+            KeyboardButton("🤖 Bot", request_users=KeyboardButtonRequestUsers(request_id=3, user_is_bot=True, max_quantity=1))
         ],
         [
-            InlineKeyboardButton("👥 Group", callback_data="group"),
-            InlineKeyboardButton("📢 Channel", callback_data="channel"),
-            InlineKeyboardButton("🏛️ Forum", callback_data="forum")
+            KeyboardButton("👥 Group", request_chat=KeyboardButtonRequestChat(request_id=4, chat_is_channel=False)),
+            KeyboardButton("📢 Channel", request_chat=KeyboardButtonRequestChat(request_id=5, chat_is_channel=True)),
+            KeyboardButton("🏛️ Forum", request_chat=KeyboardButtonRequestChat(request_id=6, chat_is_channel=False, chat_is_forum=True))
         ],
         [
-            InlineKeyboardButton("🏘️ My Group", callback_data="my_group"),
-            InlineKeyboardButton("📡 My Channel", callback_data="my_channel"),
-            InlineKeyboardButton("🗯️ My Forum", callback_data="my_forum")
+            KeyboardButton("🏘️ My Group", request_chat=KeyboardButtonRequestChat(request_id=7, chat_is_channel=False, user_administrator_rights=True)),
+            KeyboardButton("📡 My Channel", request_chat=KeyboardButtonRequestChat(request_id=8, chat_is_channel=True, user_administrator_rights=True)),
+            KeyboardButton("🗯️ My Forum", request_chat=KeyboardButtonRequestChat(request_id=9, chat_is_channel=False, chat_is_forum=True, user_administrator_rights=True))
         ],
         [
-            InlineKeyboardButton("💳 My Account", callback_data="my_account")
+            KeyboardButton("💳 My Account")
         ]
     ]
     
-    reply_markup = InlineKeyboardMarkup(keyboard)
+    reply_markup = ReplyKeyboardMarkup(reply_keyboard, resize_keyboard=True)
     
     await update.message.reply_text(message_text, reply_markup=reply_markup, parse_mode=ParseMode.HTML)
+
+async def handle_users_shared(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    users_shared = update.message.users_shared
+    for shared_user in users_shared.users:
+        user_id = shared_user.user_id
+        await update.message.reply_text(
+            f"✅ <b>Selected User Info:</b>\n\n"
+            f"🔑 <b>User ID:</b> <code>{user_id}</code>\n"
+            f"<i>Note: Further details are restricted by Telegram for security.</i>",
+            parse_mode=ParseMode.HTML
+        )
+
+async def handle_chat_shared(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_shared = update.message.chat_shared
+    chat_id = chat_shared.chat_id
+    
+    await update.message.reply_text(
+        f"✅ <b>Selected Chat Info:</b>\n\n"
+        f"🔑 <b>Chat ID:</b> <code>{chat_id}</code>",
+        parse_mode=ParseMode.HTML
+    )
 
 if __name__ == '__main__':
     token = os.environ.get("TELEGRAM_BOT_TOKEN")
@@ -65,8 +85,11 @@ if __name__ == '__main__':
     else:
         application = ApplicationBuilder().token(token).build()
         
-        start_handler = CommandHandler('start', start)
-        application.add_handler(start_handler)
+        application.add_handler(CommandHandler('start', start))
+        
+        # Handlers for shared users and chats
+        application.add_handler(MessageHandler(filters.StatusUpdate.USERS_SHARED, handle_users_shared))
+        application.add_handler(MessageHandler(filters.StatusUpdate.CHAT_SHARED, handle_chat_shared))
         
         print("Bot is starting...")
         application.run_polling()
