@@ -1,11 +1,14 @@
-from telegram import Update, KeyboardButton, ReplyKeyboardMarkup, KeyboardButtonRequestUsers, KeyboardButtonRequestChat, ChatAdministratorRights, InlineQueryResultArticle, InputTextMessageContent
-from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, MessageHandler, filters, InlineQueryHandler
+from telegram import Update, KeyboardButton, ReplyKeyboardMarkup, KeyboardButtonRequestUsers, KeyboardButtonRequestChat, ChatAdministratorRights, InlineQueryResultArticle, InputTextMessageContent, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, MessageHandler, filters, InlineQueryHandler, CallbackQueryHandler
 from telegram.constants import ParseMode
 
 import os
 import logging
 import html
 import uuid
+import json
+import psycopg2
+from psycopg2.extras import RealDictCursor
 
 # Enable logging
 logging.basicConfig(
@@ -13,11 +16,52 @@ logging.basicConfig(
     level=logging.INFO
 )
 
+OWNER_ID = int(os.environ.get("OWNER_ID", 0))
+
+def get_db_connection():
+    return psycopg2.connect(os.environ.get("DATABASE_URL"))
+
+def init_db():
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS users (
+            user_id BIGINT PRIMARY KEY,
+            first_name TEXT,
+            last_name TEXT,
+            username TEXT,
+            language_code TEXT,
+            is_premium BOOLEAN,
+            is_banned BOOLEAN DEFAULT FALSE,
+            joined_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    conn.commit()
+    cur.close()
+    conn.close()
+
+def save_user(user):
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute("""
+        INSERT INTO users (user_id, first_name, last_name, username, language_code, is_premium)
+        VALUES (%s, %s, %s, %s, %s, %s)
+        ON CONFLICT (user_id) DO UPDATE SET
+            first_name = EXCLUDED.first_name,
+            last_name = EXCLUDED.last_name,
+            username = EXCLUDED.username,
+            language_code = EXCLUDED.language_code,
+            is_premium = EXCLUDED.is_premium
+    """, (user.id, user.first_name, user.last_name, user.username, user.language_code, user.is_premium))
+    conn.commit()
+    cur.close()
+    conn.close()
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
-    await show_user_info(update, user, "Your Profile Info")
-
-    # Keyboard buttons to request users/chats
+    save_user(user)
+    
+    # Common Keyboard
     admin_rights = ChatAdministratorRights(
         is_anonymous=False,
         can_manage_chat=True,
@@ -56,99 +100,110 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             KeyboardButton("💳 My Account")
         ]
     ]
-    
     reply_markup = ReplyKeyboardMarkup(reply_keyboard, resize_keyboard=True)
+
+    if user.id == OWNER_ID:
+        # Owner Dashboard
+        inline_keyboard = [
+            [InlineKeyboardButton("📊 Status", callback_data="status")],
+            [InlineKeyboardButton("👥 Users", callback_data="users_menu"), InlineKeyboardButton("📢 Broadcast", callback_data="broadcast")]
+        ]
+        inline_markup = InlineKeyboardMarkup(inline_keyboard)
+        await update.message.reply_text("👑 <b>Welcome Owner!</b>\nYour Dashboard is ready.", reply_markup=reply_markup, parse_mode=ParseMode.HTML)
+        await update.message.reply_text("🛠 <b>Admin Panel:</b>", reply_markup=inline_markup, parse_mode=ParseMode.HTML)
+    else:
+        # Regular User
+        await show_user_info(update, user, "Your Profile Info")
+        await update.message.reply_text("Choose an option from the menu below:", reply_markup=reply_markup)
+
+async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    if query.data == "status":
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("SELECT COUNT(*) FROM users")
+        count = cur.fetchone()[0]
+        cur.close()
+        conn.close()
+        await query.edit_message_text(f"📊 <b>Bot Status:</b>\nTotal Users: {count}", parse_mode=ParseMode.HTML)
     
-    await update.message.reply_text("Choose an option from the menu below:", reply_markup=reply_markup)
+    elif query.data == "users_menu":
+        keyboard = [
+            [InlineKeyboardButton("🚫 Ban User", callback_data="ban"), InlineKeyboardButton("✅ Unban User", callback_data="unban")],
+            [InlineKeyboardButton("ℹ️ Get Info", callback_data="get_info"), InlineKeyboardButton("📄 Get User List", callback_data="get_list")]
+        ]
+        await query.edit_message_text("👥 <b>User Management:</b>", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.HTML)
+    
+    elif query.data == "get_list":
+        conn = get_db_connection()
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute("SELECT * FROM users")
+        users = cur.fetchall()
+        cur.close()
+        conn.close()
+        
+        report_path = "user_report.json"
+        with open(report_path, "w") as f:
+            json.dump(users, f, default=str, indent=4)
+        
+        with open(report_path, "rb") as f:
+            await context.bot.send_document(chat_id=query.message.chat_id, document=f, filename="users_report.json", caption="📄 Complete User Report")
 
 async def handle_users_shared(update: Update, context: ContextTypes.DEFAULT_TYPE):
     users_shared = update.message.users_shared
     for shared_user in users_shared.users:
         user_id = shared_user.user_id
         try:
-            # First try to get info from the message's shared user object directly if available
-            # Some versions of the API/Library might populate more in the update itself
             user_chat = await context.bot.get_chat(user_id)
-            
-            first_name = html.escape(user_chat.first_name or "N/A")
-            last_name = html.escape(user_chat.last_name or "N/A")
-            username = html.escape(user_chat.username) if user_chat.username else "N/A"
-            bio = html.escape(user_chat.bio or "N/A")
-            is_premium = "Yes 🌟" if getattr(user_chat, 'is_premium', False) else "No"
-            
-            message_text = (
-                f"✅ <b>User Info Found:</b>\n\n"
-                f"👤 <b>First Name:</b> {first_name}\n"
-                f"👤 <b>Last Name:</b> {last_name}\n"
-                f"🆔 <b>User Name:</b> @{username}\n"
-                f"🔑 <b>User ID:</b> <code>{user_id}</code>\n"
-                f"🌟 <b>Premium:</b> {is_premium}\n"
-                f"📝 <b>Bio:</b> {bio}"
-            )
-            await update.message.reply_text(message_text, parse_mode=ParseMode.HTML)
-            
-        except Exception as e:
-            # Fallback if get_chat fails
+            await show_user_info(update, user_chat, "User Info Found")
+        except Exception:
             await update.message.reply_text(
                 f"⚠️ <b>Privacy Restricted:</b>\n\n"
                 f"🔑 <b>User ID:</b> <code>{user_id}</code>\n\n"
-                f"यह यूजर टेलीग्राम की <b>Privacy Settings</b> की वजह से अपनी जानकारी छुपा रहा है।\n\n"
-                f"✅ <b>Solution:</b> बस इस यूजर का कोई भी मैसेज मुझे <b>Forward</b> करें, और मैं आपको उनकी पूरी जानकारी (नाम, प्रीमियम, आदि) दिखा दूँगा!",
+                f"This user is hiding their information due to Telegram's <b>Privacy Settings</b>.\n\n"
+                f"✅ <b>Solution:</b> Just <b>Forward</b> any message from this user to me, and I will show you their full details!",
                 parse_mode=ParseMode.HTML
             )
 
 async def handle_chat_shared(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat_shared = update.message.chat_shared
-    chat_id = chat_shared.chat_id
+    chat_id = update.message.chat_shared.chat_id
     try:
-        # Fetch full chat info
         chat = await context.bot.get_chat(chat_id)
-        title = html.escape(chat.title or "N/A")
-        username = html.escape(chat.username) if chat.username else "N/A"
-        description = html.escape(chat.description or "N/A")
-        members_count = await chat.get_member_count()
-        
         message_text = (
             f"✅ <b>Chat Info Found:</b>\n\n"
-            f"🏷️ <b>Title:</b> {title}\n"
-            f"🆔 <b>User Name:</b> @{username}\n"
+            f"🏷️ <b>Title:</b> {html.escape(chat.title or 'N/A')}\n"
+            f"🆔 <b>User Name:</b> @{html.escape(chat.username or 'N/A')}\n"
             f"🔑 <b>Chat ID:</b> <code>{chat_id}</code>\n"
-            f"👥 <b>Members:</b> {members_count}\n"
-            f"📝 <b>Description:</b> {description}"
+            f"👥 <b>Members:</b> {await chat.get_member_count()}\n"
+            f"📝 <b>Description:</b> {html.escape(chat.description or 'N/A')}"
         )
         await update.message.reply_text(message_text, parse_mode=ParseMode.HTML)
     except Exception:
-        await update.message.reply_text(
-            f"✅ <b>Selected Chat ID:</b> <code>{chat_id}</code>",
-            parse_mode=ParseMode.HTML
-        )
+        await update.message.reply_text(f"✅ <b>Selected Chat ID:</b> <code>{chat_id}</code>", parse_mode=ParseMode.HTML)
 
 async def handle_text_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    save_user(user)
     text = update.message.text
     if text == "💳 My Account":
-        user = update.effective_user
         await show_user_info(update, user, "Your Account Info")
     elif update.message.forward_origin:
         origin = update.message.forward_origin
         if hasattr(origin, 'sender_user'):
             await show_user_info(update, origin.sender_user, "Forwarded User Info")
         elif hasattr(origin, 'chat'):
-            await update.message.reply_text(
-                f"📢 <b>Forwarded Chat Info:</b>\n\n"
-                f"🏷️ <b>Title:</b> {html.escape(origin.chat.title)}\n"
-                f"🔑 <b>Chat ID:</b> <code>{origin.chat.id}</code>",
-                parse_mode=ParseMode.HTML
-            )
-        else:
-            await update.message.reply_text("❌ Could not get info from this forward (Privacy settings).")
+            await update.message.reply_text(f"📢 <b>Forwarded Chat Info:</b>\n🏷️ <b>Title:</b> {html.escape(origin.chat.title)}\n🔑 <b>Chat ID:</b> <code>{origin.chat.id}</code>", parse_mode=ParseMode.HTML)
 
 async def show_user_info(update, user, title):
-    first_name = html.escape(user.first_name)
-    last_name = html.escape(user.last_name or 'N/A')
-    username = html.escape(user.username) if user.username else 'N/A'
+    first_name = html.escape(user.first_name or "N/A")
+    last_name = html.escape(user.last_name or "N/A")
+    username = html.escape(user.username or "N/A")
     user_id = user.id
     language = html.escape(user.language_code or 'N/A')
-    is_premium = "Yes 🌟" if user.is_premium else "No"
+    is_premium = "Yes 🌟" if getattr(user, 'is_premium', False) else "No"
+    bio = html.escape(getattr(user, 'bio', "N/A"))
 
     message_text = (
         f"👤 <b>{title}:</b>\n\n"
@@ -157,54 +212,19 @@ async def show_user_info(update, user, title):
         f"🆔 <b>User Name:</b> @{username}\n"
         f"🔑 <b>User ID:</b> <code>{user_id}</code>\n"
         f"🌐 <b>Language:</b> {language}\n"
-        f"🌟 <b>Premium:</b> {is_premium}"
+        f"🌟 <b>Premium:</b> {is_premium}\n"
+        f"📝 <b>Bio:</b> {bio}"
     )
     await update.message.reply_text(message_text, parse_mode=ParseMode.HTML)
 
-async def inline_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.inline_query.query
-    user = update.inline_query.from_user
-    
-    # Show user's own info as an inline result
-    first_name = html.escape(user.first_name)
-    last_name = html.escape(user.last_name or 'N/A')
-    username = html.escape(user.username) if user.username else 'N/A'
-    user_id = user.id
-    language = html.escape(user.language_code or 'N/A')
-    is_premium = "Yes 🌟" if user.is_premium else "No"
-
-    content = (
-        f"👤 <b>User Info:</b>\n\n"
-        f"👤 <b>First Name:</b> {first_name}\n"
-        f"👤 <b>Last Name:</b> {last_name}\n"
-        f"🆔 <b>User Name:</b> @{username}\n"
-        f"🔑 <b>User ID:</b> <code>{user_id}</code>\n"
-        f"🌐 <b>Language:</b> {language}\n"
-        f"🌟 <b>Premium:</b> {is_premium}"
-    )
-
-    results = [
-        InlineQueryResultArticle(
-            id=str(uuid.uuid4()),
-            title="My Info",
-            description="Send your profile info",
-            input_message_content=InputTextMessageContent(content, parse_mode=ParseMode.HTML)
-        )
-    ]
-    await update.inline_query.answer(results, cache_time=1)
-
 if __name__ == '__main__':
+    init_db()
     token = os.environ.get("TELEGRAM_BOT_TOKEN")
-    if not token:
-        print("Error: TELEGRAM_BOT_TOKEN not found in environment variables.")
-    else:
-        application = ApplicationBuilder().token(token).build()
-        
-        application.add_handler(CommandHandler('start', start))
-        application.add_handler(MessageHandler(filters.StatusUpdate.USERS_SHARED, handle_users_shared))
-        application.add_handler(MessageHandler(filters.StatusUpdate.CHAT_SHARED, handle_chat_shared))
-        application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text_messages))
-        application.add_handler(InlineQueryHandler(inline_query))
-        
-        print("Bot is starting...")
-        application.run_polling()
+    application = ApplicationBuilder().token(token).build()
+    application.add_handler(CommandHandler('start', start))
+    application.add_handler(CallbackQueryHandler(button_callback))
+    application.add_handler(MessageHandler(filters.StatusUpdate.USERS_SHARED, handle_users_shared))
+    application.add_handler(MessageHandler(filters.StatusUpdate.CHAT_SHARED, handle_chat_shared))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text_messages))
+    print("Bot is starting...")
+    application.run_polling()
