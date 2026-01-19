@@ -65,20 +65,58 @@ async def handle_users_shared(update: Update, context: ContextTypes.DEFAULT_TYPE
     users_shared = update.message.users_shared
     for shared_user in users_shared.users:
         user_id = shared_user.user_id
-        await update.message.reply_text(
-            f"✅ <b>Selected User ID:</b> <code>{user_id}</code>\n\n"
-            f"💡 <i>To get full details, forward a message from this user to me!</i>",
-            parse_mode=ParseMode.HTML
-        )
+        try:
+            # Try to fetch full user info using get_chat
+            user_chat = await context.bot.get_chat(user_id)
+            
+            first_name = html.escape(user_chat.first_name or "N/A")
+            last_name = html.escape(user_chat.last_name or "N/A")
+            username = html.escape(user_chat.username) if user_chat.username else "N/A"
+            bio = html.escape(user_chat.bio or "N/A")
+            
+            message_text = (
+                f"✅ <b>User Info Found:</b>\n\n"
+                f"👤 <b>First Name:</b> {first_name}\n"
+                f"👤 <b>Last Name:</b> {last_name}\n"
+                f"🆔 <b>User Name:</b> @{username}\n"
+                f"🔑 <b>User ID:</b> <code>{user_id}</code>\n"
+                f"📝 <b>Bio:</b> {bio}"
+            )
+            await update.message.reply_text(message_text, parse_mode=ParseMode.HTML)
+            
+        except Exception as e:
+            # Fallback if get_chat fails (usually due to privacy or bot not having seen the user)
+            await update.message.reply_text(
+                f"✅ <b>Selected User ID:</b> <code>{user_id}</code>\n\n"
+                f"💡 <i>I could only get the ID. To see full details, the user must have interacted with me before or you can forward their message!</i>",
+                parse_mode=ParseMode.HTML
+            )
 
 async def handle_chat_shared(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_shared = update.message.chat_shared
     chat_id = chat_shared.chat_id
-    
-    await update.message.reply_text(
-        f"✅ <b>Selected Chat ID:</b> <code>{chat_id}</code>",
-        parse_mode=ParseMode.HTML
-    )
+    try:
+        # Fetch full chat info
+        chat = await context.bot.get_chat(chat_id)
+        title = html.escape(chat.title or "N/A")
+        username = html.escape(chat.username) if chat.username else "N/A"
+        description = html.escape(chat.description or "N/A")
+        members_count = await chat.get_member_count()
+        
+        message_text = (
+            f"✅ <b>Chat Info Found:</b>\n\n"
+            f"🏷️ <b>Title:</b> {title}\n"
+            f"🆔 <b>User Name:</b> @{username}\n"
+            f"🔑 <b>Chat ID:</b> <code>{chat_id}</code>\n"
+            f"👥 <b>Members:</b> {members_count}\n"
+            f"📝 <b>Description:</b> {description}"
+        )
+        await update.message.reply_text(message_text, parse_mode=ParseMode.HTML)
+    except Exception:
+        await update.message.reply_text(
+            f"✅ <b>Selected Chat ID:</b> <code>{chat_id}</code>",
+            parse_mode=ParseMode.HTML
+        )
 
 async def handle_text_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
