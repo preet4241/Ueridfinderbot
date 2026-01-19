@@ -1,4 +1,4 @@
-from telegram import Update, KeyboardButton, ReplyKeyboardMarkup, KeyboardButtonRequestUsers, KeyboardButtonRequestChat
+from telegram import Update, KeyboardButton, ReplyKeyboardMarkup, KeyboardButtonRequestUsers, KeyboardButtonRequestChat, ChatAdministratorRights
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, MessageHandler, filters
 from telegram.constants import ParseMode
 
@@ -32,6 +32,25 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
     # Keyboard buttons to request users/chats
+    # user_administrator_rights requires a ChatAdministratorRights object
+    admin_rights = ChatAdministratorRights(
+        is_anonymous=False,
+        can_manage_chat=True,
+        can_delete_messages=False,
+        can_manage_video_chats=False,
+        can_restrict_members=False,
+        can_promote_members=False,
+        can_change_info=False,
+        can_invite_users=False,
+        can_post_messages=False,
+        can_edit_messages=False,
+        can_pin_messages=False,
+        can_post_stories=False,
+        can_edit_stories=False,
+        can_delete_stories=False,
+        can_manage_topics=False
+    )
+
     reply_keyboard = [
         [
             KeyboardButton("👤 User", request_users=KeyboardButtonRequestUsers(request_id=1, user_is_bot=False, max_quantity=1)),
@@ -44,9 +63,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             KeyboardButton("🏛️ Forum", request_chat=KeyboardButtonRequestChat(request_id=6, chat_is_channel=False, chat_is_forum=True))
         ],
         [
-            KeyboardButton("🏘️ My Group", request_chat=KeyboardButtonRequestChat(request_id=7, chat_is_channel=False, user_administrator_rights=True)),
-            KeyboardButton("📡 My Channel", request_chat=KeyboardButtonRequestChat(request_id=8, chat_is_channel=True, user_administrator_rights=True)),
-            KeyboardButton("🗯️ My Forum", request_chat=KeyboardButtonRequestChat(request_id=9, chat_is_channel=False, chat_is_forum=True, user_administrator_rights=True))
+            KeyboardButton("🏘️ My Group", request_chat=KeyboardButtonRequestChat(request_id=7, chat_is_channel=False, user_administrator_rights=admin_rights)),
+            KeyboardButton("📡 My Channel", request_chat=KeyboardButtonRequestChat(request_id=8, chat_is_channel=True, user_administrator_rights=admin_rights)),
+            KeyboardButton("🗯️ My Forum", request_chat=KeyboardButtonRequestChat(request_id=9, chat_is_channel=False, chat_is_forum=True, user_administrator_rights=admin_rights))
         ],
         [
             KeyboardButton("💳 My Account")
