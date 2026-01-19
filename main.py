@@ -101,24 +101,34 @@ async def handle_text_messages(update: Update, context: ContextTypes.DEFAULT_TYP
     text = update.message.text
     if text == "💳 My Account":
         user = update.effective_user
-        
-        # Escape user-provided content to avoid HTML parsing errors
-        first_name = html.escape(user.first_name)
-        last_name = html.escape(user.last_name or 'N/A')
-        username = html.escape(user.username) if user.username else 'N/A'
-        user_id = user.id
-        language = html.escape(user.language_code or 'N/A')
+        await show_user_info(update, user, "Your Account Info")
+    elif update.message.forward_origin:
+        # Handle forwarded messages to get user info
+        origin = update.message.forward_origin
+        if hasattr(origin, 'sender_user'):
+            await show_user_info(update, origin.sender_user, "Forwarded User Info")
+        else:
+            await update.message.reply_text("❌ Could not get info from this forward (Privacy settings).")
 
-        # User info message with HTML and Emojis
-        message_text = (
-            f"👤 <b>Your Account Info:</b>\n\n"
-            f"👤 <b>First Name:</b> {first_name}\n"
-            f"👤 <b>Last Name:</b> {last_name}\n"
-            f"🆔 <b>User Name:</b> @{username}\n"
-            f"🔑 <b>User ID:</b> <code>{user_id}</code>\n"
-            f"🌐 <b>Language:</b> {language}"
-        )
-        await update.message.reply_text(message_text, parse_mode=ParseMode.HTML)
+async def show_user_info(update, user, title):
+    # Escape user-provided content
+    first_name = html.escape(user.first_name)
+    last_name = html.escape(user.last_name or 'N/A')
+    username = html.escape(user.username) if user.username else 'N/A'
+    user_id = user.id
+    language = html.escape(user.language_code or 'N/A')
+    is_premium = "Yes 🌟" if user.is_premium else "No"
+
+    message_text = (
+        f"👤 <b>{title}:</b>\n\n"
+        f"👤 <b>First Name:</b> {first_name}\n"
+        f"👤 <b>Last Name:</b> {last_name}\n"
+        f"🆔 <b>User Name:</b> @{username}\n"
+        f"🔑 <b>User ID:</b> <code>{user_id}</code>\n"
+        f"🌐 <b>Language:</b> {language}\n"
+        f"🌟 <b>Premium:</b> {is_premium}"
+    )
+    await update.message.reply_text(message_text, parse_mode=ParseMode.HTML)
 
 if __name__ == '__main__':
     token = os.environ.get("TELEGRAM_BOT_TOKEN")
