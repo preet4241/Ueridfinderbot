@@ -73,6 +73,10 @@ async def handle_users_shared(update: Update, context: ContextTypes.DEFAULT_TYPE
             last_name = html.escape(user_chat.last_name or "N/A")
             username = html.escape(user_chat.username) if user_chat.username else "N/A"
             bio = html.escape(user_chat.bio or "N/A")
+            # In python-telegram-bot, the Chat object (returned by get_chat) 
+            # might not have a direct is_premium field like the User object.
+            # We check for it safely.
+            is_premium = "Yes 🌟" if getattr(user_chat, 'is_premium', False) else "No"
             
             message_text = (
                 f"✅ <b>User Info Found:</b>\n\n"
@@ -80,6 +84,7 @@ async def handle_users_shared(update: Update, context: ContextTypes.DEFAULT_TYPE
                 f"👤 <b>Last Name:</b> {last_name}\n"
                 f"🆔 <b>User Name:</b> @{username}\n"
                 f"🔑 <b>User ID:</b> <code>{user_id}</code>\n"
+                f"🌟 <b>Premium:</b> {is_premium}\n"
                 f"📝 <b>Bio:</b> {bio}"
             )
             await update.message.reply_text(message_text, parse_mode=ParseMode.HTML)
