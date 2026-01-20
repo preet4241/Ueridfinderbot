@@ -32,6 +32,8 @@ def init_db():
             language_code TEXT,
             is_premium BOOLEAN,
             is_banned BOOLEAN DEFAULT FALSE,
+            ban_reason TEXT,
+            unban_at TIMESTAMP,
             joined_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
@@ -112,6 +114,17 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("🛠 <b>Admin Panel:</b>", reply_markup=inline_markup, parse_mode=ParseMode.HTML)
     else:
         # Regular User
+        # Check if banned
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("SELECT is_banned FROM users WHERE user_id = %s", (user.id,))
+        res = cur.fetchone()
+        if res and res[0]:
+            await update.message.reply_text("🚫 You are banned from using this bot.")
+            return
+        cur.close()
+        conn.close()
+
         await show_user_info(update, user, "Your Profile Info")
         await update.message.reply_text("Choose an option from the menu below:", reply_markup=reply_markup)
 
@@ -130,11 +143,77 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     elif query.data == "users_menu":
         keyboard = [
-            [InlineKeyboardButton("🚫 Ban User", callback_data="ban"), InlineKeyboardButton("✅ Unban User", callback_data="unban")],
+            [InlineKeyboardButton("🚫 Ban User", callback_data="ban_start"), InlineKeyboardButton("✅ Unban User", callback_data="unban")],
             [InlineKeyboardButton("ℹ️ Get Info", callback_data="get_info"), InlineKeyboardButton("📄 Get User List", callback_data="get_list")]
         ]
         await query.edit_message_text("👥 <b>User Management:</b>", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.HTML)
     
+    elif query.data == "ban_start":
+        await query.edit_message_text("🚫 <b>Ban User:</b>\nPlease forward a message from the user, or send their User ID or Username.", parse_mode=ParseMode.HTML)
+        context.user_data['action'] = 'awaiting_ban_identity'
+
+    elif query.data.startswith("confirm_ban_"):
+        user_id = int(query.data.split("_")[2])
+        reason = context.user_data.get('ban_reason', 'No reason provided')
+        
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("UPDATE users SET is_banned = TRUE, ban_reason = %s WHERE user_id = %s", (reason, user_id))
+        conn.commit()
+        cur.close()
+        conn.close()
+
+        await query.edit_message_text(f"✅ User <code>{user_id}</code> has been banned.", parse_mode=ParseMode.HTML)
+        
+        # Notify user
+        appeal_keyboard = [[InlineKeyboardButton("📩 Appeal", callback_data=f"appeal_{user_id}")]]
+        try:
+            await context.bot.send_message(
+                chat_id=user_id,
+                text=f"🚫 <b>You have been banned!</b>\n\n<b>Reason:</b> {reason}\n\nYou can appeal this decision below.",
+                reply_markup=InlineKeyboardMarkup(appeal_keyboard),
+                parse_mode=ParseMode.HTML
+            )
+        except Exception:
+            pass
+
+    elif query.data.startswith("appeal_"):
+        user_id = int(query.data.split("_")[1])
+        await query.edit_message_text("Please send your appeal message now. You can also skip this step.", 
+                                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Skip ⏩", callback_data=f"skip_appeal_{user_id}")]]))
+        context.user_data['action'] = 'awaiting_appeal_msg'
+
+    elif query.data.startswith("skip_appeal_"):
+        user_id = int(query.data.split("_")[2])
+        await query.edit_message_text("Appeal skipped. The owner has been notified.")
+        await forward_appeal_to_owner(user_id, "No appeal message provided (Skipped)", context)
+
+    elif query.data.startswith("owner_unban_"):
+        user_id = int(query.data.split("_")[2])
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("UPDATE users SET is_banned = FALSE, ban_reason = NULL WHERE user_id = %s", (user_id,))
+        conn.commit()
+        cur.close()
+        conn.close()
+        await query.edit_message_text(f"✅ User {user_id} has been unbanned.")
+        try:
+            await context.bot.send_message(user_id, "✅ Your appeal was accepted. You have been unbanned!")
+        except: pass
+
+    elif query.data.startswith("owner_notnow_"):
+        user_id = int(query.data.split("_")[2])
+        # In a real app, we'd use a background task. For now, we'll just set an unban timer in DB.
+        import datetime
+        unban_at = datetime.datetime.now() + datetime.timedelta(hours=48)
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("UPDATE users SET unban_at = %s WHERE user_id = %s", (unban_at, user_id))
+        conn.commit()
+        cur.close()
+        conn.close()
+        await query.edit_message_text(f"🕒 User {user_id} will be automatically unbanned in 48 hours.")
+
     elif query.data == "get_list":
         conn = get_db_connection()
         cur = conn.cursor(cursor_factory=RealDictCursor)
@@ -186,7 +265,63 @@ async def handle_text_messages(update: Update, context: ContextTypes.DEFAULT_TYP
     user = update.effective_user
     save_user(user)
     text = update.message.text
-    if text == "💳 My Account":
+    
+    # Check if user is banned
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT is_banned, unban_at FROM users WHERE user_id = %s", (user.id,))
+    res = cur.fetchone()
+    if res and res[0]:
+        import datetime
+        if res[1] and datetime.datetime.now() > res[1]:
+            cur.execute("UPDATE users SET is_banned = FALSE, unban_at = NULL WHERE user_id = %s", (user.id,))
+            conn.commit()
+        else:
+            await update.message.reply_text("🚫 You are banned from using this bot.")
+            cur.close()
+            conn.close()
+            return
+    cur.close()
+    conn.close()
+
+    action = context.user_data.get('action')
+
+    if action == 'awaiting_ban_identity':
+        target_id = None
+        if update.message.forward_origin and hasattr(update.message.forward_origin, 'sender_user'):
+            target_id = update.message.forward_origin.sender_user.id
+        elif text.isdigit():
+            target_id = int(text)
+        elif text.startswith('@'):
+            conn = get_db_connection()
+            cur = conn.cursor()
+            cur.execute("SELECT user_id FROM users WHERE username = %s", (text[1:],))
+            row = cur.fetchone()
+            if row: target_id = row[0]
+            cur.close()
+            conn.close()
+        
+        if target_id:
+            context.user_data['target_ban_id'] = target_id
+            context.user_data['action'] = 'awaiting_ban_reason'
+            await update.message.reply_text(f"Target identified: <code>{target_id}</code>\nNow please enter the <b>Reason</b> for the ban.", parse_mode=ParseMode.HTML)
+        else:
+            await update.message.reply_text("Could not identify user. Please try forwarding their message or sending their User ID.")
+
+    elif action == 'awaiting_ban_reason':
+        context.user_data['ban_reason'] = text
+        target_id = context.user_data.get('target_ban_id')
+        context.user_data['action'] = None
+        keyboard = [[InlineKeyboardButton("✅ Confirm Ban", callback_data=f"confirm_ban_{target_id}")], [InlineKeyboardButton("❌ Cancel", callback_data="users_menu")]]
+        await update.message.reply_text(f"❓ <b>Confirm Ban:</b>\n\n<b>User ID:</b> <code>{target_id}</code>\n<b>Reason:</b> {text}", 
+                                      reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.HTML)
+
+    elif action == 'awaiting_appeal_msg':
+        context.user_data['action'] = None
+        await update.message.reply_text("✅ Your appeal has been sent to the owner.")
+        await forward_appeal_to_owner(user.id, text, context)
+
+    elif text == "💳 My Account":
         await show_user_info(update, user, "Your Account Info")
     elif update.message.forward_origin:
         origin = update.message.forward_origin
@@ -194,6 +329,21 @@ async def handle_text_messages(update: Update, context: ContextTypes.DEFAULT_TYP
             await show_user_info(update, origin.sender_user, "Forwarded User Info")
         elif hasattr(origin, 'chat'):
             await update.message.reply_text(f"📢 <b>Forwarded Chat Info:</b>\n🏷️ <b>Title:</b> {html.escape(origin.chat.title)}\n🔑 <b>Chat ID:</b> <code>{origin.chat.id}</code>", parse_mode=ParseMode.HTML)
+
+async def forward_appeal_to_owner(user_id, appeal_msg, context):
+    owner_id = int(os.environ.get("OWNER_ID", 0))
+    if not owner_id: return
+    
+    keyboard = [
+        [InlineKeyboardButton("✅ Unban", callback_data=f"owner_unban_{user_id}"), 
+         InlineKeyboardButton("🕒 Not Now (48h)", callback_data=f"owner_notnow_{user_id}")]
+    ]
+    await context.bot.send_message(
+        chat_id=owner_id,
+        text=f"⚖️ <b>New Appeal Received:</b>\n\n<b>User ID:</b> <code>{user_id}</code>\n<b>Message:</b> {appeal_msg}",
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        parse_mode=ParseMode.HTML
+    )
 
 async def show_user_info(update, user, title):
     first_name = html.escape(user.first_name or "N/A")
