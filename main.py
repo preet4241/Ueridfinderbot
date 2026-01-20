@@ -230,6 +230,20 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await context.bot.send_document(chat_id=query.message.chat_id, document=f, filename="users_report.json", caption="📄 Complete User Report")
 
 async def handle_users_shared(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    if user.id != OWNER_ID:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("SELECT is_banned FROM users WHERE user_id = %s", (user.id,))
+        res = cur.fetchone()
+        if res and res[0]:
+            await update.message.reply_text("🚫 You are banned from using this bot.")
+            cur.close()
+            conn.close()
+            return
+        cur.close()
+        conn.close()
+
     users_shared = update.message.users_shared
     for shared_user in users_shared.users:
         user_id = shared_user.user_id
@@ -246,6 +260,20 @@ async def handle_users_shared(update: Update, context: ContextTypes.DEFAULT_TYPE
             )
 
 async def handle_chat_shared(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    if user.id != OWNER_ID:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("SELECT is_banned FROM users WHERE user_id = %s", (user.id,))
+        res = cur.fetchone()
+        if res and res[0]:
+            await update.message.reply_text("🚫 You are banned from using this bot.")
+            cur.close()
+            conn.close()
+            return
+        cur.close()
+        conn.close()
+
     chat_id = update.message.chat_shared.chat_id
     try:
         chat = await context.bot.get_chat(chat_id)
@@ -350,9 +378,21 @@ async def show_user_info(update, user, title):
     last_name = html.escape(user.last_name or "N/A")
     username = html.escape(user.username or "N/A")
     user_id = user.id
-    language = html.escape(user.language_code or 'N/A')
+    language = html.escape(getattr(user, 'language_code', 'N/A') or 'N/A')
     is_premium = "Yes 🌟" if getattr(user, 'is_premium', False) else "No"
-    bio = html.escape(getattr(user, 'bio', "N/A"))
+    
+    # Try to get bio if possible, but handle cases where it's not available
+    bio = "N/A"
+    try:
+        if hasattr(user, 'bio'):
+            bio = html.escape(user.bio or "N/A")
+        else:
+            # If user object doesn't have bio, try fetching full chat info if it's a Chat object
+            if hasattr(user, 'get_chat'):
+                full_chat = await user.get_chat()
+                bio = html.escape(full_chat.bio or "N/A")
+    except:
+        pass
 
     message_text = (
         f"👤 <b>{title}:</b>\n\n"
@@ -364,6 +404,9 @@ async def show_user_info(update, user, title):
         f"🌟 <b>Premium:</b> {is_premium}\n"
         f"📝 <b>Bio:</b> {bio}"
     )
+    
+    # If it's a privacy restricted case from handle_users_shared, 
+    # the user object might be limited. We already show a special message there.
     await update.message.reply_text(message_text, parse_mode=ParseMode.HTML)
 
 if __name__ == '__main__':
