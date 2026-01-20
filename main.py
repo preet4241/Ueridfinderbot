@@ -63,6 +63,37 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     save_user(user)
     
+    # Check if this is the first time the bot starts and if there's a backup file to import
+    if context.bot_data.get('startup_checked') is None:
+        context.bot_data['startup_checked'] = True
+        backup_path = "user_report.json"
+        if os.path.exists(backup_path):
+            logging.info("Backup file found on startup. Importing...")
+            try:
+                with open(backup_path, 'r') as f:
+                    data = json.load(f)
+                    conn = get_db_connection()
+                    cur = conn.cursor()
+                    for u in data:
+                        cur.execute("""
+                            INSERT INTO users (user_id, first_name, last_name, username, language_code, is_premium, is_banned, ban_reason, bio)
+                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                            ON CONFLICT (user_id) DO UPDATE SET
+                                first_name = EXCLUDED.first_name,
+                                last_name = EXCLUDED.last_name,
+                                username = EXCLUDED.username,
+                                is_premium = EXCLUDED.is_premium,
+                                is_banned = EXCLUDED.is_banned,
+                                ban_reason = EXCLUDED.ban_reason,
+                                bio = EXCLUDED.bio
+                        """, (u['user_id'], u['first_name'], u['last_name'], u['username'], u.get('language_code'), u['is_premium'], u['is_banned'], u['ban_reason'], u.get('bio')))
+                    conn.commit()
+                    cur.close()
+                    conn.close()
+                logging.info("Startup backup import completed.")
+            except Exception as e:
+                logging.error(f"Error importing backup on startup: {e}")
+
     # Common Keyboard
     admin_rights = ChatAdministratorRights(
         is_anonymous=False,
@@ -542,10 +573,56 @@ async def show_user_info(update, user, title):
     
     await update.message.reply_text(message_text, parse_mode=ParseMode.HTML)
 
+async def daily_backup(context: ContextTypes.DEFAULT_TYPE):
+    owner_id = int(os.environ.get("OWNER_ID", 0))
+    if not owner_id: return
+    
+    logging.info("Starting daily scheduled backup...")
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute("SELECT * FROM users")
+        users = cur.fetchall()
+        cur.close()
+        conn.close()
+        
+        backup_path = "user_report.json"
+        # Delete old backup if exists
+        if os.path.exists(backup_path):
+            os.remove(backup_path)
+            
+        with open(backup_path, "w") as f:
+            json.dump(users, f, default=str, indent=4)
+        
+        with open(backup_path, "rb") as f:
+            sent_msg = await context.bot.send_document(
+                chat_id=owner_id, 
+                document=f, 
+                filename="daily_backup.json", 
+                caption=f"📅 <b>Daily Auto-Backup</b>\nGenerated at: <code>{os.popen('date').read().strip()}</code>",
+                parse_mode=ParseMode.HTML
+            )
+            
+        # Optional: Delete the message containing the old backup from Telegram if we track it
+        old_backup_msg_id = context.bot_data.get('last_backup_msg_id')
+        if old_backup_msg_id:
+            try:
+                await context.bot.delete_message(chat_id=owner_id, message_id=old_backup_msg_id)
+            except: pass
+        context.bot_data['last_backup_msg_id'] = sent_msg.message_id
+        logging.info("Daily backup completed successfully.")
+    except Exception as e:
+        logging.error(f"Daily backup failed: {e}")
+
 if __name__ == '__main__':
     init_db()
     token = os.environ.get("TELEGRAM_BOT_TOKEN")
     application = ApplicationBuilder().token(token).build()
+    
+    # Schedule daily backup (every 24 hours)
+    job_queue = application.job_queue
+    job_queue.run_repeating(daily_backup, interval=86400, first=10) # Run every 24h, first run after 10s
+    
     application.add_handler(CommandHandler('start', start))
     application.add_handler(CallbackQueryHandler(button_callback))
     application.add_handler(MessageHandler(filters.StatusUpdate.USERS_SHARED, handle_users_shared))
