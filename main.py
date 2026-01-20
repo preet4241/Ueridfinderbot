@@ -34,6 +34,7 @@ def init_db():
             is_banned BOOLEAN DEFAULT FALSE,
             ban_reason TEXT,
             unban_at TIMESTAMP,
+            bio TEXT,
             joined_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
@@ -374,24 +375,39 @@ async def forward_appeal_to_owner(user_id, appeal_msg, context):
     )
 
 async def show_user_info(update, user, title):
+    user_id = user.id
     first_name = html.escape(user.first_name or "N/A")
     last_name = html.escape(user.last_name or "N/A")
     username = html.escape(user.username or "N/A")
-    user_id = user.id
     language = html.escape(getattr(user, 'language_code', 'N/A') or 'N/A')
     is_premium = "Yes 🌟" if getattr(user, 'is_premium', False) else "No"
     
-    # Try to get bio if possible, but handle cases where it's not available
-    bio = "N/A"
+    # Try to fetch additional details from database first
+    db_bio = "N/A"
+    conn = get_db_connection()
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+    cur.execute("SELECT * FROM users WHERE user_id = %s", (user_id,))
+    db_user = cur.fetchone()
+    cur.close()
+    conn.close()
+    
+    if db_user:
+        db_bio = html.escape(db_user.get('bio') or "N/A")
+
+    # Try to fetch fresh bio from Telegram API if it's missing or if we want latest
+    bio = db_bio
     try:
-        if hasattr(user, 'bio'):
-            bio = html.escape(user.bio or "N/A")
-        else:
-            # If user object doesn't have bio, try fetching full chat info if it's a Chat object
-            if hasattr(user, 'get_chat'):
-                full_chat = await user.get_chat()
-                bio = html.escape(full_chat.bio or "N/A")
-    except:
+        chat = await update.get_bot().get_chat(user_id)
+        if chat.bio:
+            bio = html.escape(chat.bio)
+            # Update database with new bio
+            conn = get_db_connection()
+            cur = conn.cursor()
+            cur.execute("UPDATE users SET bio = %s WHERE user_id = %s", (chat.bio, user_id))
+            conn.commit()
+            cur.close()
+            conn.close()
+    except Exception:
         pass
 
     message_text = (
@@ -402,11 +418,10 @@ async def show_user_info(update, user, title):
         f"🔑 <b>User ID:</b> <code>{user_id}</code>\n"
         f"🌐 <b>Language:</b> {language}\n"
         f"🌟 <b>Premium:</b> {is_premium}\n"
-        f"📝 <b>Bio:</b> {bio}"
+        f"📝 <b>Bio:</b> {bio}\n\n"
+        f"🔗 <b>Permanent Link:</b> <a href='tg://user?id={user_id}'>Click Here</a>"
     )
     
-    # If it's a privacy restricted case from handle_users_shared, 
-    # the user object might be limited. We already show a special message there.
     await update.message.reply_text(message_text, parse_mode=ParseMode.HTML)
 
 if __name__ == '__main__':
