@@ -248,10 +248,22 @@ async def handle_users_shared(update: Update, context: ContextTypes.DEFAULT_TYPE
     users_shared = update.message.users_shared
     for shared_user in users_shared.users:
         user_id = shared_user.user_id
+        # Directly try to show info by ID, bypassing the 'shared' object limitations
         try:
-            user_chat = await context.bot.get_chat(user_id)
-            await show_user_info(update, user_chat, "User Info Found")
-        except Exception:
+            # Create a mock user object with just the ID to pass to show_user_info
+            # show_user_info will attempt to fetch full details via bot.get_chat(user_id)
+            class MockUser:
+                def __init__(self, id):
+                    self.id = id
+                    self.first_name = None
+                    self.last_name = None
+                    self.username = None
+                    self.language_code = None
+                    self.is_premium = False
+
+            await show_user_info(update, MockUser(user_id), "User Info Found")
+        except Exception as e:
+            logging.error(f"Error in handle_users_shared for {user_id}: {e}")
             await update.message.reply_text(
                 f"⚠️ <b>Privacy Restricted:</b>\n\n"
                 f"🔑 <b>User ID:</b> <code>{user_id}</code>\n\n"
