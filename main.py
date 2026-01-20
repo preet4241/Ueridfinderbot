@@ -346,8 +346,17 @@ async def show_user_info(update, user, title):
 
 async def daily_backup(context: ContextTypes.DEFAULT_TYPE):
     target_id = BACKUP_CHANNEL_ID or os.environ.get("OWNER_ID", 0)
-    if not target_id: return
+    if not target_id:
+        logging.warning("No BACKUP_CHANNEL_ID or OWNER_ID set. Backup skipped.")
+        return
     try:
+        # Check if chat is accessible
+        try:
+            await context.bot.get_chat(target_id)
+        except Exception:
+            logging.error(f"Backup Error: Chat {target_id} not found or bot is not a member. Please add the bot as an admin.")
+            return
+
         conn = get_db_connection()
         cur = conn.cursor(); cur.execute("SELECT * FROM users")
         users = [dict(row) for row in cur.fetchall()]; conn.close()

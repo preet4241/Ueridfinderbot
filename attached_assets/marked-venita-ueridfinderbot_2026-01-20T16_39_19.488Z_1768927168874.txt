@@ -1,0 +1,60 @@
+Instance created. Preparing to start...
+Instance is starting... Waiting for health checks to pass.
+2026-01-20 16:35:34,780 - werkzeug - INFO - [31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on all addresses (0.0.0.0)
+ * Running on http://127.0.0.1:5000
+ * Running on http://10.1.219.87:5000
+2026-01-20 16:35:34,781 - werkzeug - INFO - [33mPress CTRL+C to quit[0m
+ * Serving Flask app ''
+ * Debug mode: off
+2026-01-20 16:35:35,042 - apscheduler.scheduler - INFO - Adding job tentatively -- it will be properly scheduled when the scheduler starts
+Bot starting...
+2026-01-20 16:35:35,393 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot8564487987:AAHRfW-XK1RYscpQQfh0L4ZkYxn5FIHnVEU/getMe "HTTP/1.1 200 OK"
+2026-01-20 16:35:35,413 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot8564487987:AAHRfW-XK1RYscpQQfh0L4ZkYxn5FIHnVEU/deleteWebhook "HTTP/1.1 200 OK"
+2026-01-20 16:35:35,417 - apscheduler.scheduler - INFO - Added job "daily_backup" to job store "default"
+2026-01-20 16:35:35,417 - apscheduler.scheduler - INFO - Scheduler started
+2026-01-20 16:35:35,417 - telegram.ext.Application - INFO - Application started
+2026-01-20 16:35:45,051 - apscheduler.executors.default - INFO - Running job "daily_backup (trigger: interval[0:10:00], next run at: 2026-01-20 16:45:45 UTC)" (scheduled at 2026-01-20 16:35:45.040837+00:00)
+2026-01-20 16:35:45,719 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot8564487987:AAHRfW-XK1RYscpQQfh0L4ZkYxn5FIHnVEU/getUpdates "HTTP/1.1 200 OK"
+2026-01-20 16:35:45,912 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot8564487987:AAHRfW-XK1RYscpQQfh0L4ZkYxn5FIHnVEU/sendDocument "HTTP/1.1 400 Bad Request"
+2026-01-20 16:35:45,913 - root - ERROR - Backup Error: Chat not found
+2026-01-20 16:35:45,913 - apscheduler.executors.default - INFO - Job "daily_backup (trigger: interval[0:10:00], next run at: 2026-01-20 16:45:45 UTC)" executed successfully
+2026-01-20 16:35:55,734 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot8564487987:AAHRfW-XK1RYscpQQfh0L4ZkYxn5FIHnVEU/getUpdates "HTTP/1.1 200 OK"
+2026-01-20 16:36:05,766 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot8564487987:AAHRfW-XK1RYscpQQfh0L4ZkYxn5FIHnVEU/getUpdates "HTTP/1.1 200 OK"
+2026-01-20 16:36:15,787 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot8564487987:AAHRfW-XK1RYscpQQfh0L4ZkYxn5FIHnVEU/getUpdates "HTTP/1.1 200 OK"
+2026-01-20 16:36:25,803 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot8564487987:AAHRfW-XK1RYscpQQfh0L4ZkYxn5FIHnVEU/getUpdates "HTTP/1.1 200 OK"
+2026-01-20 16:36:35,818 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot8564487987:AAHRfW-XK1RYscpQQfh0L4ZkYxn5FIHnVEU/getUpdates "HTTP/1.1 200 OK"
+2026-01-20 16:36:45,835 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot8564487987:AAHRfW-XK1RYscpQQfh0L4ZkYxn5FIHnVEU/getUpdates "HTTP/1.1 200 OK"
+2026-01-20 16:36:55,852 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot8564487987:AAHRfW-XK1RYscpQQfh0L4ZkYxn5FIHnVEU/getUpdates "HTTP/1.1 200 OK"
+2026-01-20 16:37:05,868 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot8564487987:AAHRfW-XK1RYscpQQfh0L4ZkYxn5FIHnVEU/getUpdates "HTTP/1.1 200 OK"
+TCP health check failed on port 8000.
+2026-01-20 16:37:09,911 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot8564487987:AAHRfW-XK1RYscpQQfh0L4ZkYxn5FIHnVEU/getUpdates "HTTP/1.1 200 OK"
+2026-01-20 16:37:09,912 - telegram.ext.Application - INFO - Application is stopping. This might take a moment.
+2026-01-20 16:37:09,913 - apscheduler.scheduler - INFO - Scheduler has been shut down
+2026-01-20 16:37:09,923 - telegram.ext.Application - INFO - Application.stop() complete
+2026-01-20 16:37:42,319 - werkzeug - INFO - [31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on all addresses (0.0.0.0)
+ * Running on http://127.0.0.1:5000
+ * Running on http://10.1.219.87:5000
+2026-01-20 16:37:42,319 - werkzeug - INFO - [33mPress CTRL+C to quit[0m
+2026-01-20 16:37:42,587 - apscheduler.scheduler - INFO - Adding job tentatively -- it will be properly scheduled when the scheduler starts
+2026-01-20 16:37:42,688 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot8564487987:AAHRfW-XK1RYscpQQfh0L4ZkYxn5FIHnVEU/getMe "HTTP/1.1 200 OK"
+2026-01-20 16:37:42,708 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot8564487987:AAHRfW-XK1RYscpQQfh0L4ZkYxn5FIHnVEU/deleteWebhook "HTTP/1.1 200 OK"
+2026-01-20 16:37:42,710 - apscheduler.scheduler - INFO - Added job "daily_backup" to job store "default"
+2026-01-20 16:37:42,710 - apscheduler.scheduler - INFO - Scheduler started
+2026-01-20 16:37:42,710 - telegram.ext.Application - INFO - Application started
+ * Serving Flask app ''
+ * Debug mode: off
+Bot starting...
+2026-01-20 16:37:52,596 - apscheduler.executors.default - INFO - Running job "daily_backup (trigger: interval[0:10:00], next run at: 2026-01-20 16:47:52 UTC)" (scheduled at 2026-01-20 16:37:52.585634+00:00)
+2026-01-20 16:37:53,004 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot8564487987:AAHRfW-XK1RYscpQQfh0L4ZkYxn5FIHnVEU/getUpdates "HTTP/1.1 200 OK"
+2026-01-20 16:37:53,191 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot8564487987:AAHRfW-XK1RYscpQQfh0L4ZkYxn5FIHnVEU/sendDocument "HTTP/1.1 400 Bad Request"
+2026-01-20 16:37:53,192 - root - ERROR - Backup Error: Chat not found
+2026-01-20 16:37:53,192 - apscheduler.executors.default - INFO - Job "daily_backup (trigger: interval[0:10:00], next run at: 2026-01-20 16:47:52 UTC)" executed successfully
+2026-01-20 16:38:03,021 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot8564487987:AAHRfW-XK1RYscpQQfh0L4ZkYxn5FIHnVEU/getUpdates "HTTP/1.1 200 OK"
+2026-01-20 16:38:13,049 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot8564487987:AAHRfW-XK1RYscpQQfh0L4ZkYxn5FIHnVEU/getUpdates "HTTP/1.1 200 OK"
+2026-01-20 16:38:17,472 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot8564487987:AAHRfW-XK1RYscpQQfh0L4ZkYxn5FIHnVEU/getUpdates "HTTP/1.1 200 OK"
+2026-01-20 16:38:17,474 - root - INFO - Backup file found on startup. Importing...
+2026-01-20 16:38:17,475 - root - INFO - Startup backup import completed.
+2026-01-20 16:38:17,949 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot8564487987:AAHRfW-XK1RYscpQQfh0L4ZkYxn5FIHnVEU/sendMessage "HTTP/1.1 200 OK"
+2026-01-20 16:38:18,151 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot8564487987:AAHRfW-XK1RYscpQQfh0L4ZkYxn5FIHnVEU/sendMessage "HTTP/1.1 200 OK"
