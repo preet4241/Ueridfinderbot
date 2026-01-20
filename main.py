@@ -6,8 +6,7 @@ import os
 import logging
 import html
 import json
-import psycopg2
-from psycopg2.extras import RealDictCursor
+import sqlite3
 from flask import Flask
 from threading import Thread
 
@@ -31,23 +30,23 @@ logging.basicConfig(
     level=logging.INFO
 )
 
-OWNER_ID = int(os.environ.get("OWNER_ID", 0))
-
 def get_db_connection():
-    return psycopg2.connect(os.environ.get("DATABASE_URL"))
+    conn = sqlite3.connect("bot_database.db")
+    conn.row_factory = sqlite3.Row
+    return conn
 
 def init_db():
     conn = get_db_connection()
     cur = conn.cursor()
     cur.execute("""
         CREATE TABLE IF NOT EXISTS users (
-            user_id BIGINT PRIMARY KEY,
+            user_id INTEGER PRIMARY KEY,
             first_name TEXT,
             last_name TEXT,
             username TEXT,
             language_code TEXT,
-            is_premium BOOLEAN,
-            is_banned BOOLEAN DEFAULT FALSE,
+            is_premium INTEGER,
+            is_banned INTEGER DEFAULT 0,
             ban_reason TEXT,
             unban_at TIMESTAMP,
             bio TEXT,
@@ -55,7 +54,6 @@ def init_db():
         )
     """)
     conn.commit()
-    cur.close()
     conn.close()
 
 def save_user(user):
@@ -63,17 +61,18 @@ def save_user(user):
     cur = conn.cursor()
     cur.execute("""
         INSERT INTO users (user_id, first_name, last_name, username, language_code, is_premium)
-        VALUES (%s, %s, %s, %s, %s, %s)
+        VALUES (?, ?, ?, ?, ?, ?)
         ON CONFLICT (user_id) DO UPDATE SET
             first_name = EXCLUDED.first_name,
             last_name = EXCLUDED.last_name,
             username = EXCLUDED.username,
             language_code = EXCLUDED.language_code,
             is_premium = EXCLUDED.is_premium
-    """, (user.id, user.first_name, user.last_name, user.username, user.language_code, user.is_premium))
+    """, (user.id, user.first_name, user.last_name, user.username, user.language_code, 1 if user.is_premium else 0))
     conn.commit()
-    cur.close()
     conn.close()
+
+OWNER_ID = int(os.environ.get("OWNER_ID", 0))
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
@@ -93,7 +92,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     for u in data:
                         cur.execute("""
                             INSERT INTO users (user_id, first_name, last_name, username, language_code, is_premium, is_banned, ban_reason, bio)
-                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                             ON CONFLICT (user_id) DO UPDATE SET
                                 first_name = EXCLUDED.first_name,
                                 last_name = EXCLUDED.last_name,
@@ -102,9 +101,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                 is_banned = EXCLUDED.is_banned,
                                 ban_reason = EXCLUDED.ban_reason,
                                 bio = EXCLUDED.bio
-                        """, (u['user_id'], u['first_name'], u['last_name'], u['username'], u.get('language_code'), u['is_premium'], u['is_banned'], u['ban_reason'], u.get('bio')))
+                        """, (u['user_id'], u['first_name'], u['last_name'], u['username'], u.get('language_code'), u['is_premium'], 1 if u['is_banned'] else 0, u['ban_reason'], u.get('bio')))
                     conn.commit()
-                    cur.close()
                     conn.close()
                 logging.info("Startup backup import completed.")
             except Exception as e:
@@ -152,7 +150,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reply_markup = ReplyKeyboardMarkup(reply_keyboard, resize_keyboard=True)
 
     if user.id == OWNER_ID:
-        # Owner Dashboard
         inline_keyboard = [
             [InlineKeyboardButton("📊 Status", callback_data="status")],
             [InlineKeyboardButton("👥 Users", callback_data="users_menu"), InlineKeyboardButton("📢 Broadcast", callback_data="broadcast")]
@@ -161,16 +158,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("👑 <b>Welcome Owner!</b>\nYour Dashboard is ready.", reply_markup=reply_markup, parse_mode=ParseMode.HTML)
         await update.message.reply_text("🛠 <b>Admin Panel:</b>", reply_markup=inline_markup, parse_mode=ParseMode.HTML)
     else:
-        # Regular User
-        # Check if banned
         conn = get_db_connection()
         cur = conn.cursor()
-        cur.execute("SELECT is_banned FROM users WHERE user_id = %s", (user.id,))
+        cur.execute("SELECT is_banned FROM users WHERE user_id = ?", (user.id,))
         res = cur.fetchone()
         if res and res[0]:
             await update.message.reply_text("🚫 You are banned from using this bot.")
+            conn.close()
             return
-        cur.close()
         conn.close()
 
         await show_user_info(update, user, "Your Profile Info")
@@ -185,7 +180,6 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         cur = conn.cursor()
         cur.execute("SELECT COUNT(*) FROM users")
         count = cur.fetchone()[0]
-        cur.close()
         conn.close()
         await query.edit_message_text(f"📊 <b>Bot Status:</b>\nTotal Users: {count}", parse_mode=ParseMode.HTML)
     
@@ -206,14 +200,12 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         conn = get_db_connection()
         cur = conn.cursor()
-        cur.execute("UPDATE users SET is_banned = TRUE, ban_reason = %s WHERE user_id = %s", (reason, user_id))
+        cur.execute("UPDATE users SET is_banned = 1, ban_reason = ? WHERE user_id = ?", (reason, user_id))
         conn.commit()
-        cur.close()
         conn.close()
 
         await query.edit_message_text(f"✅ User <code>{user_id}</code> has been banned.", parse_mode=ParseMode.HTML)
         
-        # Notify user
         appeal_keyboard = [[InlineKeyboardButton("📩 Appeal", callback_data=f"appeal_{user_id}")]]
         try:
             await context.bot.send_message(
@@ -240,9 +232,8 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = int(query.data.split("_")[2])
         conn = get_db_connection()
         cur = conn.cursor()
-        cur.execute("UPDATE users SET is_banned = FALSE, ban_reason = NULL WHERE user_id = %s", (user_id,))
+        cur.execute("UPDATE users SET is_banned = 0, ban_reason = NULL WHERE user_id = ?", (user_id,))
         conn.commit()
-        cur.close()
         conn.close()
         await query.edit_message_text(f"✅ User {user_id} has been unbanned.")
         try:
@@ -251,27 +242,19 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     elif query.data.startswith("owner_notnow_"):
         user_id = int(query.data.split("_")[2])
-        # In a real app, we'd use a background task. For now, we'll just set an unban timer in DB.
         import datetime
-        unban_at = datetime.datetime.now() + datetime.timedelta(hours=48)
+        unban_at = (datetime.datetime.now() + datetime.timedelta(hours=48)).isoformat()
         conn = get_db_connection()
         cur = conn.cursor()
-        cur.execute("UPDATE users SET unban_at = %s WHERE user_id = %s", (unban_at, user_id))
+        cur.execute("UPDATE users SET unban_at = ? WHERE user_id = ?", (unban_at, user_id))
         conn.commit()
-        cur.close()
         conn.close()
         await query.edit_message_text(f"🕒 User {user_id} will be automatically unbanned in 48 hours.")
 
     elif query.data == "broadcast":
         await query.edit_message_text(
             "📢 <b>Broadcast Message:</b>\n\n"
-            "Please send the message you want to broadcast to all users.\n\n"
-            "<b>Available Placeholders:</b>\n"
-            "• <code>{first_name}</code> - User's First Name\n"
-            "• <code>{last_name}</code> - User's Last Name\n"
-            "• <code>{username}</code> - User's Username\n"
-            "• <code>{user_id}</code> - User's ID\n\n"
-            "<i>Type 'cancel' to stop.</i>",
+            "Please send the message you want to broadcast to all users.",
             parse_mode=ParseMode.HTML
         )
         context.user_data['action'] = 'awaiting_broadcast_msg'
@@ -286,10 +269,9 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     elif query.data == "get_list":
         conn = get_db_connection()
-        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur = conn.cursor()
         cur.execute("SELECT * FROM users")
-        users = cur.fetchall()
-        cur.close()
+        users = [dict(row) for row in cur.fetchall()]
         conn.close()
         
         report_path = "user_report.json"
@@ -304,31 +286,23 @@ async def handle_users_shared(update: Update, context: ContextTypes.DEFAULT_TYPE
     if user.id != OWNER_ID:
         conn = get_db_connection()
         cur = conn.cursor()
-        cur.execute("SELECT is_banned FROM users WHERE user_id = %s", (user.id,))
+        cur.execute("SELECT is_banned FROM users WHERE user_id = ?", (user.id,))
         res = cur.fetchone()
         if res and res[0]:
             await update.message.reply_text("🚫 You are banned from using this bot.")
-            cur.close()
             conn.close()
             return
-        cur.close()
         conn.close()
 
     users_shared = update.message.users_shared
     for shared_user in users_shared.users:
         user_id = shared_user.user_id
-        # Directly try to show info by ID, bypassing the 'shared' object limitations
         try:
-            # We try to get the most information possible. 
-            # If the shared_user object has more info, we use it.
             await show_user_info(update, shared_user, "User Info Found")
         except Exception as e:
             logging.error(f"Error in handle_users_shared for {user_id}: {e}")
             await update.message.reply_text(
-                f"⚠️ <b>Privacy Restricted:</b>\n\n"
-                f"🔑 <b>User ID:</b> <code>{user_id}</code>\n\n"
-                f"This user is hiding their information due to Telegram's <b>Privacy Settings</b>.\n\n"
-                f"✅ <b>Solution:</b> Just <b>Forward</b> any message from this user to me, and I will show you their full details!",
+                f"⚠️ <b>Privacy Restricted:</b>\n\n🔑 <b>User ID:</b> <code>{user_id}</code>\n\nForward any message from this user to me for full details!",
                 parse_mode=ParseMode.HTML
             )
 
@@ -337,14 +311,12 @@ async def handle_chat_shared(update: Update, context: ContextTypes.DEFAULT_TYPE)
     if user.id != OWNER_ID:
         conn = get_db_connection()
         cur = conn.cursor()
-        cur.execute("SELECT is_banned FROM users WHERE user_id = %s", (user.id,))
+        cur.execute("SELECT is_banned FROM users WHERE user_id = ?", (user.id,))
         res = cur.fetchone()
         if res and res[0]:
             await update.message.reply_text("🚫 You are banned from using this bot.")
-            cur.close()
             conn.close()
             return
-        cur.close()
         conn.close()
 
     chat_id = update.message.chat_shared.chat_id
@@ -367,22 +339,19 @@ async def handle_text_messages(update: Update, context: ContextTypes.DEFAULT_TYP
     save_user(user)
     text = update.message.text
     
-    # Check if user is banned
     conn = get_db_connection()
     cur = conn.cursor()
-    cur.execute("SELECT is_banned, unban_at FROM users WHERE user_id = %s", (user.id,))
+    cur.execute("SELECT is_banned, unban_at FROM users WHERE user_id = ?", (user.id,))
     res = cur.fetchone()
     if res and res[0]:
         import datetime
-        if res[1] and datetime.datetime.now() > res[1]:
-            cur.execute("UPDATE users SET is_banned = FALSE, unban_at = NULL WHERE user_id = %s", (user.id,))
+        if res[1] and datetime.datetime.now() > datetime.datetime.fromisoformat(res[1]):
+            cur.execute("UPDATE users SET is_banned = 0, unban_at = NULL WHERE user_id = ?", (user.id,))
             conn.commit()
         else:
             await update.message.reply_text("🚫 You are banned from using this bot.")
-            cur.close()
             conn.close()
             return
-    cur.close()
     conn.close()
 
     action = context.user_data.get('action')
@@ -395,15 +364,13 @@ async def handle_text_messages(update: Update, context: ContextTypes.DEFAULT_TYP
         elif text.startswith('@'):
             conn = get_db_connection()
             cur = conn.cursor()
-            cur.execute("SELECT user_id FROM users WHERE username = %s", (text[1:],))
+            cur.execute("SELECT user_id FROM users WHERE username = ?", (text[1:],))
             row = cur.fetchone()
             if row: target_id = row[0]
-            cur.close()
             conn.close()
         
         if target_id:
             try:
-                # Mock a user object for show_user_info
                 class MockUser:
                     def __init__(self, id):
                         self.id = id
@@ -411,40 +378,21 @@ async def handle_text_messages(update: Update, context: ContextTypes.DEFAULT_TYP
             except Exception as e:
                 await update.message.reply_text(f"❌ Error looking up user: {e}")
         else:
-            await update.message.reply_text("❌ User not found in database or invalid format.")
+            await update.message.reply_text("❌ User not found in database.")
 
     elif action == 'awaiting_broadcast_msg':
-        if text.lower() == 'cancel':
-            context.user_data['action'] = None
-            await update.message.reply_text("✅ Broadcast cancelled.")
-            return
-            
         context.user_data['action'] = None
-        await update.message.reply_text("🚀 Starting broadcast... Please wait.")
-        
+        await update.message.reply_text("🚀 Starting broadcast...")
         conn = get_db_connection()
-        cur = conn.cursor(cursor_factory=RealDictCursor)
-        cur.execute("SELECT user_id, first_name, last_name, username FROM users")
-        users = cur.fetchall()
-        cur.close()
+        cur = conn.cursor()
+        cur.execute("SELECT user_id FROM users")
+        users = [dict(row) for row in cur.fetchall()]
         conn.close()
-        
-        success = 0
-        fail = 0
         for u in users:
             try:
-                # Replace placeholders
-                msg = text.replace("{first_name}", html.escape(u['first_name'] or "N/A")) \
-                          .replace("{last_name}", html.escape(u['last_name'] or "N/A")) \
-                          .replace("{user_id}", str(u['user_id'])) \
-                          .replace("{username}", html.escape(u['username'] or "N/A"))
-                
-                await context.bot.send_message(chat_id=u['user_id'], text=msg, parse_mode=ParseMode.HTML)
-                success += 1
-            except Exception:
-                fail += 1
-        
-        await update.message.reply_text(f"🏁 <b>Broadcast Completed:</b>\n✅ Success: {success}\n❌ Failed: {fail}", parse_mode=ParseMode.HTML)
+                await context.bot.send_message(chat_id=u['user_id'], text=text, parse_mode=ParseMode.HTML)
+            except: pass
+        await update.message.reply_text("🏁 Broadcast Completed.")
 
     elif action == 'awaiting_ban_identity':
         target_id = None
@@ -455,30 +403,29 @@ async def handle_text_messages(update: Update, context: ContextTypes.DEFAULT_TYP
         elif text.startswith('@'):
             conn = get_db_connection()
             cur = conn.cursor()
-            cur.execute("SELECT user_id FROM users WHERE username = %s", (text[1:],))
+            cur.execute("SELECT user_id FROM users WHERE username = ?", (text[1:],))
             row = cur.fetchone()
             if row: target_id = row[0]
-            cur.close()
             conn.close()
         
         if target_id:
             context.user_data['target_ban_id'] = target_id
             context.user_data['action'] = 'awaiting_ban_reason'
-            await update.message.reply_text(f"Target identified: <code>{target_id}</code>\nNow please enter the <b>Reason</b> for the ban.", parse_mode=ParseMode.HTML)
+            await update.message.reply_text(f"Target identified: <code>{target_id}</code>\nEnter Reason.", parse_mode=ParseMode.HTML)
         else:
-            await update.message.reply_text("Could not identify user. Please try forwarding their message or sending their User ID.")
+            await update.message.reply_text("Could not identify user.")
 
     elif action == 'awaiting_ban_reason':
         context.user_data['ban_reason'] = text
         target_id = context.user_data.get('target_ban_id')
         context.user_data['action'] = None
         keyboard = [[InlineKeyboardButton("✅ Confirm Ban", callback_data=f"confirm_ban_{target_id}")], [InlineKeyboardButton("❌ Cancel", callback_data="users_menu")]]
-        await update.message.reply_text(f"❓ <b>Confirm Ban:</b>\n\n<b>User ID:</b> <code>{target_id}</code>\n<b>Reason:</b> {text}", 
+        await update.message.reply_text(f"❓ Confirm Ban ID: <code>{target_id}</code>\nReason: {text}", 
                                       reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.HTML)
 
     elif action == 'awaiting_appeal_msg':
         context.user_data['action'] = None
-        await update.message.reply_text("✅ Your appeal has been sent to the owner.")
+        await update.message.reply_text("✅ Appeal sent.")
         await forward_appeal_to_owner(user.id, text, context)
 
     elif text == "💳 My Account":
@@ -487,163 +434,69 @@ async def handle_text_messages(update: Update, context: ContextTypes.DEFAULT_TYP
         origin = update.message.forward_origin
         if hasattr(origin, 'sender_user'):
             await show_user_info(update, origin.sender_user, "Forwarded User Info")
-        elif hasattr(origin, 'chat'):
-            await update.message.reply_text(f"📢 <b>Forwarded Chat Info:</b>\n🏷️ <b>Title:</b> {html.escape(origin.chat.title)}\n🔑 <b>Chat ID:</b> <code>{origin.chat.id}</code>", parse_mode=ParseMode.HTML)
 
 async def forward_appeal_to_owner(user_id, appeal_msg, context):
     owner_id = int(os.environ.get("OWNER_ID", 0))
     if not owner_id: return
-    
-    keyboard = [
-        [InlineKeyboardButton("✅ Unban", callback_data=f"owner_unban_{user_id}"), 
-         InlineKeyboardButton("🕒 Not Now (48h)", callback_data=f"owner_notnow_{user_id}")]
-    ]
-    await context.bot.send_message(
-        chat_id=owner_id,
-        text=f"⚖️ <b>New Appeal Received:</b>\n\n<b>User ID:</b> <code>{user_id}</code>\n<b>Message:</b> {appeal_msg}",
-        reply_markup=InlineKeyboardMarkup(keyboard),
-        parse_mode=ParseMode.HTML
-    )
+    keyboard = [[InlineKeyboardButton("✅ Unban", callback_data=f"owner_unban_{user_id}"), 
+                 InlineKeyboardButton("🕒 Not Now", callback_data=f"owner_notnow_{user_id}")]]
+    await context.bot.send_message(chat_id=owner_id, text=f"⚖️ Appeal: {user_id}\nMsg: {appeal_msg}", 
+                                    reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.HTML)
 
 async def show_user_info(update, user, title):
     user_id = getattr(user, 'id', getattr(user, 'user_id', None))
-    if not user_id:
-        return
-
-    # Initialize variables with what we have
     first_name = html.escape(getattr(user, 'first_name', "") or "N/A")
     last_name = html.escape(getattr(user, 'last_name', "") or "N/A")
     username = html.escape(getattr(user, 'username', "") or "N/A")
     language = html.escape(getattr(user, 'language_code', "") or 'N/A')
     raw_is_premium = getattr(user, 'is_premium', False)
     bio = "N/A"
-
-    # Try to fetch fresh data from Telegram API to get Bio and potentially more
     try:
         chat = await update.get_bot().get_chat(user_id)
         first_name = html.escape(chat.first_name or first_name)
         last_name = html.escape(chat.last_name or last_name)
         username = html.escape(chat.username or username)
         bio = html.escape(chat.bio or "N/A")
-        
-        # Priority for is_premium: Chat object > User object
         if hasattr(chat, 'is_premium') and chat.is_premium is not None:
             raw_is_premium = chat.is_premium
-    except Exception as e:
-        logging.error(f"API Error for {user_id}: {e}")
-
-    # Final check for premium status
+    except: pass
     is_premium_text = "Yes 🌟" if raw_is_premium else "No"
-    
-    # Check if we have critical missing info to suggest fallback
-    missing_info = []
-    if first_name == "N/A": missing_info.append("First Name")
-    if username == "N/A": missing_info.append("Username")
-    if bio == "N/A": missing_info.append("Bio")
-    
-    fallback_msg = ""
-    if missing_info:
-        fallback_msg = (
-            f"\n\n⚠️ <b>Notice:</b> Some details ({', '.join(missing_info)}) could not be retrieved due to privacy settings.\n"
-            f"✅ <b>Solution:</b> Please <b>Forward</b> any message from this user to me to get more accurate details!"
-        )
-    
-    # Save/Update in DB
-    try:
-        conn = get_db_connection()
-        cur = conn.cursor()
-        cur.execute("""
-            INSERT INTO users (user_id, first_name, last_name, username, language_code, is_premium, bio)
-            VALUES (%s, %s, %s, %s, %s, %s, %s)
-            ON CONFLICT (user_id) DO UPDATE SET
-                first_name = EXCLUDED.first_name,
-                last_name = EXCLUDED.last_name,
-                username = EXCLUDED.username,
-                is_premium = EXCLUDED.is_premium,
-                bio = EXCLUDED.bio,
-                language_code = COALESCE(users.language_code, EXCLUDED.language_code)
-        """, (user_id, first_name if first_name != "N/A" else None, 
-              last_name if last_name != "N/A" else None, 
-              username if username != "N/A" else None, 
-              language if language != "N/A" else None, 
-              raw_is_premium, 
-              bio if bio != "N/A" else None))
-        conn.commit()
-        cur.close()
-        conn.close()
-    except Exception as e:
-        logging.error(f"DB Error for {user_id}: {e}")
-
-    message_text = (
-        f"👤 <b>{title}:</b>\n\n"
-        f"👤 <b>First Name:</b> {first_name}\n"
-        f"👤 <b>Last Name:</b> {last_name}\n"
-        f"🆔 <b>User Name:</b> @{username}\n"
-        f"🔑 <b>User ID:</b> <code>{user_id}</code>\n"
-        f"🌐 <b>Language:</b> {language}\n"
-        f"🌟 <b>Premium:</b> {is_premium_text}\n"
-        f"📝 <b>Bio:</b> {bio}\n\n"
-        f"🔗 <b>Permanent Link:</b> <a href='tg://user?id={user_id}'>Click Here</a>"
-        f"{fallback_msg}"
-    )
-    
+    message_text = (f"👤 <b>{title}:</b>\n\n🏷️ FN: {first_name}\n🏷️ LN: {last_name}\n🆔 UN: @{username}\n🔑 ID: <code>{user_id}</code>\n🌐 Lang: {language}\n🌟 Prem: {is_premium_text}\n📝 Bio: {bio}")
     await update.message.reply_text(message_text, parse_mode=ParseMode.HTML)
 
 async def daily_backup(context: ContextTypes.DEFAULT_TYPE):
     owner_id = int(os.environ.get("OWNER_ID", 0))
     if not owner_id: return
-    
-    logging.info("Starting daily scheduled backup...")
     try:
         conn = get_db_connection()
-        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur = conn.cursor()
         cur.execute("SELECT * FROM users")
-        users = cur.fetchall()
-        cur.close()
+        users = [dict(row) for row in cur.fetchall()]
         conn.close()
-        
-        backup_path = "user_report.json"
-        # Delete old backup if exists
-        if os.path.exists(backup_path):
-            os.remove(backup_path)
-            
-        with open(backup_path, "w") as f:
-            json.dump(users, f, default=str, indent=4)
-        
-        with open(backup_path, "rb") as f:
-            sent_msg = await context.bot.send_document(
-                chat_id=owner_id, 
-                document=f, 
-                filename="daily_backup.json", 
-                caption=f"📅 <b>Daily Auto-Backup</b>\nGenerated at: <code>{os.popen('date').read().strip()}</code>",
-                parse_mode=ParseMode.HTML
-            )
-            
-        # Optional: Delete the message containing the old backup from Telegram if we track it
-        old_backup_msg_id = context.bot_data.get('last_backup_msg_id')
-        if old_backup_msg_id:
-            try:
-                await context.bot.delete_message(chat_id=owner_id, message_id=old_backup_msg_id)
-            except: pass
-        context.bot_data['last_backup_msg_id'] = sent_msg.message_id
-        logging.info("Daily backup completed successfully.")
-    except Exception as e:
-        logging.error(f"Daily backup failed: {e}")
+        path = "user_report.json"
+        with open(path, "w") as f: json.dump(users, f, default=str, indent=4)
+        with open(path, "rb") as f:
+            await context.bot.send_document(chat_id=owner_id, document=f, filename="backup.json")
+    except: pass
 
-if __name__ == '__main__':
+async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
+    logging.error(f"Error {context.error}")
+
+def main():
     init_db()
     keep_alive()
-    token = os.environ.get("TELEGRAM_BOT_TOKEN")
+    token = os.environ.get("TELEGRAM_TOKEN")
+    if not token: return
     application = ApplicationBuilder().token(token).build()
-    
-    # Schedule daily backup (every 24 hours)
-    job_queue = application.job_queue
-    job_queue.run_repeating(daily_backup, interval=86400, first=10) # Run every 24h, first run after 10s
-    
-    application.add_handler(CommandHandler('start', start))
+    application.job_queue.run_repeating(daily_backup, interval=86400, first=10)
+    application.add_handler(CommandHandler("start", start))
     application.add_handler(CallbackQueryHandler(button_callback))
     application.add_handler(MessageHandler(filters.StatusUpdate.USERS_SHARED, handle_users_shared))
     application.add_handler(MessageHandler(filters.StatusUpdate.CHAT_SHARED, handle_chat_shared))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text_messages))
-    print("Bot is starting...")
+    application.add_error_handler(error_handler)
+    print("Bot starting...")
     application.run_polling()
+
+if __name__ == '__main__':
+    main()
