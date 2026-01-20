@@ -368,8 +368,10 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
 def main():
     init_db()
     keep_alive()
-    token = os.environ.get("TELEGRAM_TOKEN")
-    if not token: return
+    token = os.environ.get("TELEGRAM_BOT_TOKEN") or os.environ.get("TELEGRAM_TOKEN")
+    if not token:
+        logging.error("TELEGRAM_BOT_TOKEN not found!")
+        return
     application = ApplicationBuilder().token(token).build()
     application.job_queue.run_repeating(daily_backup, interval=600, first=10)
     application.add_handler(CommandHandler("start", start))
