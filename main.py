@@ -8,6 +8,22 @@ import html
 import json
 import psycopg2
 from psycopg2.extras import RealDictCursor
+from flask import Flask
+from threading import Thread
+
+# Flask server for keeping the bot alive
+flask_app = Flask('')
+
+@flask_app.route('/')
+def home():
+    return "Bot is alive!"
+
+def run_flask():
+    flask_app.run(host='0.0.0.0', port=5000)
+
+def keep_alive():
+    t = Thread(target=run_flask)
+    t.start()
 
 # Enable logging
 logging.basicConfig(
@@ -616,6 +632,7 @@ async def daily_backup(context: ContextTypes.DEFAULT_TYPE):
 
 if __name__ == '__main__':
     init_db()
+    keep_alive()
     token = os.environ.get("TELEGRAM_BOT_TOKEN")
     application = ApplicationBuilder().token(token).build()
     
