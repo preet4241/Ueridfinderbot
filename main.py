@@ -407,6 +407,19 @@ async def show_user_info(update, user, title):
     # Final check for premium status
     is_premium_text = "Yes 🌟" if raw_is_premium else "No"
     
+    # Check if we have critical missing info to suggest fallback
+    missing_info = []
+    if first_name == "N/A": missing_info.append("First Name")
+    if username == "N/A": missing_info.append("Username")
+    if bio == "N/A": missing_info.append("Bio")
+    
+    fallback_msg = ""
+    if missing_info:
+        fallback_msg = (
+            f"\n\n⚠️ <b>Notice:</b> Some details ({', '.join(missing_info)}) could not be retrieved due to privacy settings.\n"
+            f"✅ <b>Solution:</b> Please <b>Forward</b> any message from this user to me to get more accurate details!"
+        )
+    
     # Save/Update in DB
     try:
         conn = get_db_connection()
@@ -443,6 +456,7 @@ async def show_user_info(update, user, title):
         f"🌟 <b>Premium:</b> {is_premium_text}\n"
         f"📝 <b>Bio:</b> {bio}\n\n"
         f"🔗 <b>Permanent Link:</b> <a href='tg://user?id={user_id}'>Click Here</a>"
+        f"{fallback_msg}"
     )
     
     await update.message.reply_text(message_text, parse_mode=ParseMode.HTML)
