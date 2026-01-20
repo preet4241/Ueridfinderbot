@@ -388,39 +388,65 @@ async def forward_appeal_to_owner(user_id, appeal_msg, context):
 
 async def show_user_info(update, user, title):
     user_id = user.id
-    first_name = html.escape(user.first_name or "N/A")
-    last_name = html.escape(user.last_name or "N/A")
-    username = html.escape(user.username or "N/A")
-    language = html.escape(getattr(user, 'language_code', 'N/A') or 'N/A')
-    is_premium = "Yes 🌟" if getattr(user, 'is_premium', False) else "No"
     
-    # Try to fetch additional details from database first
-    db_bio = "N/A"
-    conn = get_db_connection()
-    cur = conn.cursor(cursor_factory=RealDictCursor)
-    cur.execute("SELECT * FROM users WHERE user_id = %s", (user_id,))
-    db_user = cur.fetchone()
-    cur.close()
-    conn.close()
-    
-    if db_user:
-        db_bio = html.escape(db_user.get('bio') or "N/A")
-
-    # Try to fetch fresh bio from Telegram API if it's missing or if we want latest
-    bio = db_bio
+    # Try to fetch fresh data from Telegram API first
     try:
         chat = await update.get_bot().get_chat(user_id)
-        if chat.bio:
-            bio = html.escape(chat.bio)
-            # Update database with new bio
+        first_name = html.escape(chat.first_name or "N/A")
+        last_name = html.escape(chat.last_name or "N/A")
+        username = html.escape(chat.username or "N/A")
+        bio = html.escape(chat.bio or "N/A")
+        
+        # In python-telegram-bot v20+, is_premium is available on the Chat object
+        # for user chats if the bot has interacted with the user.
+        # However, for the most accurate check, we check the 'is_premium' attribute
+        # which might be on the 'user' object if passed from a handler
+        raw_is_premium = getattr(chat, 'is_premium', None)
+        if raw_is_premium is None:
+            raw_is_premium = getattr(user, 'is_premium', False)
+            
+        is_premium = "Yes 🌟" if raw_is_premium else "No"
+        language = html.escape(getattr(user, 'language_code', 'N/A') or 'N/A')
+        
+        # Update database with fresh info
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("""
+            INSERT INTO users (user_id, first_name, last_name, username, language_code, is_premium, bio)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (user_id) DO UPDATE SET
+                first_name = EXCLUDED.first_name,
+                last_name = EXCLUDED.last_name,
+                username = EXCLUDED.username,
+                is_premium = EXCLUDED.is_premium,
+                bio = EXCLUDED.bio
+        """, (user_id, chat.first_name, chat.last_name, chat.username, getattr(user, 'language_code', None), raw_is_premium, chat.bio))
+        conn.commit()
+        cur.close()
+        conn.close()
+        
+    except Exception as e:
+        logging.error(f"Error fetching fresh info for {user_id}: {e}")
+        # Fallback to provided user object and database
+        first_name = html.escape(getattr(user, 'first_name', "N/A") or "N/A")
+        last_name = html.escape(getattr(user, 'last_name', "N/A") or "N/A")
+        username = html.escape(getattr(user, 'username', "N/A") or "N/A")
+        language = html.escape(getattr(user, 'language_code', 'N/A') or 'N/A')
+        is_premium = "Yes 🌟" if getattr(user, 'is_premium', False) else "No"
+        
+        # Try to fetch bio from database
+        bio = "N/A"
+        try:
             conn = get_db_connection()
-            cur = conn.cursor()
-            cur.execute("UPDATE users SET bio = %s WHERE user_id = %s", (chat.bio, user_id))
-            conn.commit()
+            cur = conn.cursor(cursor_factory=RealDictCursor)
+            cur.execute("SELECT bio FROM users WHERE user_id = %s", (user_id,))
+            db_user = cur.fetchone()
+            if db_user and db_user['bio']:
+                bio = html.escape(db_user['bio'])
             cur.close()
             conn.close()
-    except Exception:
-        pass
+        except:
+            pass
 
     message_text = (
         f"👤 <b>{title}:</b>\n\n"
