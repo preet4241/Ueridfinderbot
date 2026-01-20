@@ -250,18 +250,9 @@ async def handle_users_shared(update: Update, context: ContextTypes.DEFAULT_TYPE
         user_id = shared_user.user_id
         # Directly try to show info by ID, bypassing the 'shared' object limitations
         try:
-            # Create a mock user object with just the ID to pass to show_user_info
-            # show_user_info will attempt to fetch full details via bot.get_chat(user_id)
-            class MockUser:
-                def __init__(self, id):
-                    self.id = id
-                    self.first_name = None
-                    self.last_name = None
-                    self.username = None
-                    self.language_code = None
-                    self.is_premium = False
-
-            await show_user_info(update, MockUser(user_id), "User Info Found")
+            # We try to get the most information possible. 
+            # If the shared_user object has more info, we use it.
+            await show_user_info(update, shared_user, "User Info Found")
         except Exception as e:
             logging.error(f"Error in handle_users_shared for {user_id}: {e}")
             await update.message.reply_text(
@@ -387,28 +378,37 @@ async def forward_appeal_to_owner(user_id, appeal_msg, context):
     )
 
 async def show_user_info(update, user, title):
-    user_id = user.id
-    
-    # Try to fetch fresh data from Telegram API first
+    user_id = getattr(user, 'id', getattr(user, 'user_id', None))
+    if not user_id:
+        return
+
+    # Initialize variables with what we have
+    first_name = html.escape(getattr(user, 'first_name', "") or "N/A")
+    last_name = html.escape(getattr(user, 'last_name', "") or "N/A")
+    username = html.escape(getattr(user, 'username', "") or "N/A")
+    language = html.escape(getattr(user, 'language_code', "") or 'N/A')
+    raw_is_premium = getattr(user, 'is_premium', False)
+    bio = "N/A"
+
+    # Try to fetch fresh data from Telegram API to get Bio and potentially more
     try:
         chat = await update.get_bot().get_chat(user_id)
-        first_name = html.escape(chat.first_name or "N/A")
-        last_name = html.escape(chat.last_name or "N/A")
-        username = html.escape(chat.username or "N/A")
+        first_name = html.escape(chat.first_name or first_name)
+        last_name = html.escape(chat.last_name or last_name)
+        username = html.escape(chat.username or username)
         bio = html.escape(chat.bio or "N/A")
         
-        # In python-telegram-bot v20+, is_premium is available on the Chat object
-        # for user chats if the bot has interacted with the user.
-        # However, for the most accurate check, we check the 'is_premium' attribute
-        # which might be on the 'user' object if passed from a handler
-        raw_is_premium = getattr(chat, 'is_premium', None)
-        if raw_is_premium is None:
-            raw_is_premium = getattr(user, 'is_premium', False)
-            
-        is_premium = "Yes 🌟" if raw_is_premium else "No"
-        language = html.escape(getattr(user, 'language_code', 'N/A') or 'N/A')
-        
-        # Update database with fresh info
+        # Priority for is_premium: Chat object > User object
+        if hasattr(chat, 'is_premium') and chat.is_premium is not None:
+            raw_is_premium = chat.is_premium
+    except Exception as e:
+        logging.error(f"API Error for {user_id}: {e}")
+
+    # Final check for premium status
+    is_premium_text = "Yes 🌟" if raw_is_premium else "No"
+    
+    # Save/Update in DB
+    try:
         conn = get_db_connection()
         cur = conn.cursor()
         cur.execute("""
@@ -419,34 +419,19 @@ async def show_user_info(update, user, title):
                 last_name = EXCLUDED.last_name,
                 username = EXCLUDED.username,
                 is_premium = EXCLUDED.is_premium,
-                bio = EXCLUDED.bio
-        """, (user_id, chat.first_name, chat.last_name, chat.username, getattr(user, 'language_code', None), raw_is_premium, chat.bio))
+                bio = EXCLUDED.bio,
+                language_code = COALESCE(users.language_code, EXCLUDED.language_code)
+        """, (user_id, first_name if first_name != "N/A" else None, 
+              last_name if last_name != "N/A" else None, 
+              username if username != "N/A" else None, 
+              language if language != "N/A" else None, 
+              raw_is_premium, 
+              bio if bio != "N/A" else None))
         conn.commit()
         cur.close()
         conn.close()
-        
     except Exception as e:
-        logging.error(f"Error fetching fresh info for {user_id}: {e}")
-        # Fallback to provided user object and database
-        first_name = html.escape(getattr(user, 'first_name', "N/A") or "N/A")
-        last_name = html.escape(getattr(user, 'last_name', "N/A") or "N/A")
-        username = html.escape(getattr(user, 'username', "N/A") or "N/A")
-        language = html.escape(getattr(user, 'language_code', 'N/A') or 'N/A')
-        is_premium = "Yes 🌟" if getattr(user, 'is_premium', False) else "No"
-        
-        # Try to fetch bio from database
-        bio = "N/A"
-        try:
-            conn = get_db_connection()
-            cur = conn.cursor(cursor_factory=RealDictCursor)
-            cur.execute("SELECT bio FROM users WHERE user_id = %s", (user_id,))
-            db_user = cur.fetchone()
-            if db_user and db_user['bio']:
-                bio = html.escape(db_user['bio'])
-            cur.close()
-            conn.close()
-        except:
-            pass
+        logging.error(f"DB Error for {user_id}: {e}")
 
     message_text = (
         f"👤 <b>{title}:</b>\n\n"
@@ -455,7 +440,7 @@ async def show_user_info(update, user, title):
         f"🆔 <b>User Name:</b> @{username}\n"
         f"🔑 <b>User ID:</b> <code>{user_id}</code>\n"
         f"🌐 <b>Language:</b> {language}\n"
-        f"🌟 <b>Premium:</b> {is_premium}\n"
+        f"🌟 <b>Premium:</b> {is_premium_text}\n"
         f"📝 <b>Bio:</b> {bio}\n\n"
         f"🔗 <b>Permanent Link:</b> <a href='tg://user?id={user_id}'>Click Here</a>"
     )
