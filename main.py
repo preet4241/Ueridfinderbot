@@ -215,6 +215,28 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         conn.close()
         await query.edit_message_text(f"🕒 User {user_id} will be automatically unbanned in 48 hours.")
 
+    elif query.data == "broadcast":
+        await query.edit_message_text(
+            "📢 <b>Broadcast Message:</b>\n\n"
+            "Please send the message you want to broadcast to all users.\n\n"
+            "<b>Available Placeholders:</b>\n"
+            "• <code>{first_name}</code> - User's First Name\n"
+            "• <code>{last_name}</code> - User's Last Name\n"
+            "• <code>{username}</code> - User's Username\n"
+            "• <code>{user_id}</code> - User's ID\n\n"
+            "<i>Type 'cancel' to stop.</i>",
+            parse_mode=ParseMode.HTML
+        )
+        context.user_data['action'] = 'awaiting_broadcast_msg'
+
+    elif query.data == "get_info":
+        await query.edit_message_text(
+            "ℹ️ <b>Get User Info:</b>\n"
+            "Please send the <b>User ID</b> or <b>Username</b> (with @) to look up in the database.",
+            parse_mode=ParseMode.HTML
+        )
+        context.user_data['action'] = 'awaiting_info_lookup'
+    
     elif query.data == "get_list":
         conn = get_db_connection()
         cur = conn.cursor(cursor_factory=RealDictCursor)
@@ -318,7 +340,66 @@ async def handle_text_messages(update: Update, context: ContextTypes.DEFAULT_TYP
 
     action = context.user_data.get('action')
 
-    if action == 'awaiting_ban_identity':
+    if action == 'awaiting_info_lookup':
+        context.user_data['action'] = None
+        target_id = None
+        if text.isdigit():
+            target_id = int(text)
+        elif text.startswith('@'):
+            conn = get_db_connection()
+            cur = conn.cursor()
+            cur.execute("SELECT user_id FROM users WHERE username = %s", (text[1:],))
+            row = cur.fetchone()
+            if row: target_id = row[0]
+            cur.close()
+            conn.close()
+        
+        if target_id:
+            try:
+                # Mock a user object for show_user_info
+                class MockUser:
+                    def __init__(self, id):
+                        self.id = id
+                await show_user_info(update, MockUser(target_id), "Database Lookup Results")
+            except Exception as e:
+                await update.message.reply_text(f"❌ Error looking up user: {e}")
+        else:
+            await update.message.reply_text("❌ User not found in database or invalid format.")
+
+    elif action == 'awaiting_broadcast_msg':
+        if text.lower() == 'cancel':
+            context.user_data['action'] = None
+            await update.message.reply_text("✅ Broadcast cancelled.")
+            return
+            
+        context.user_data['action'] = None
+        await update.message.reply_text("🚀 Starting broadcast... Please wait.")
+        
+        conn = get_db_connection()
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute("SELECT user_id, first_name, last_name, username FROM users")
+        users = cur.fetchall()
+        cur.close()
+        conn.close()
+        
+        success = 0
+        fail = 0
+        for u in users:
+            try:
+                # Replace placeholders
+                msg = text.replace("{first_name}", html.escape(u['first_name'] or "N/A")) \
+                          .replace("{last_name}", html.escape(u['last_name'] or "N/A")) \
+                          .replace("{user_id}", str(u['user_id'])) \
+                          .replace("{username}", html.escape(u['username'] or "N/A"))
+                
+                await context.bot.send_message(chat_id=u['user_id'], text=msg, parse_mode=ParseMode.HTML)
+                success += 1
+            except Exception:
+                fail += 1
+        
+        await update.message.reply_text(f"🏁 <b>Broadcast Completed:</b>\n✅ Success: {success}\n❌ Failed: {fail}", parse_mode=ParseMode.HTML)
+
+    elif action == 'awaiting_ban_identity':
         target_id = None
         if update.message.forward_origin and hasattr(update.message.forward_origin, 'sender_user'):
             target_id = update.message.forward_origin.sender_user.id
